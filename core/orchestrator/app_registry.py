@@ -1,4 +1,4 @@
-# core/orchestrator/app_register.py
+# core/orchestrator/app_registry.py
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ class IntentSpec:
     name: str
     description: str = ""
     params: Tuple[str, ...] = ()
+    # ✅ 新增：是否对外暴露（默认 True）
+    exposed: bool = True
 
 
 @dataclass(frozen=True)
@@ -68,8 +70,6 @@ class AppRegistry:
         if not system_md.exists():
             raise FileNotFoundError(f"缺少 prompts/system.md: {system_md}")
 
-        # pipeline.py 可选（某些业务可用默认 pipeline），但面试官通常需要
-        # 这里不强制；由 PipelineRegistry 决定无 pipeline.py 时的 fallback 策略
         app_spec = AppSpec(
             app_id=app_id,
             plugin_dir=plugin_dir,
@@ -79,6 +79,9 @@ class AppRegistry:
         self._apps[app_id] = app_spec
         return app_spec
 
+    # ------------------------------------------------------------
+    # 查询 / 列表
+    # ------------------------------------------------------------
     def get(self, app_id: str) -> AppSpec:
         if app_id not in self._apps:
             raise KeyError(f"app_id 尚未注册: {app_id}")
@@ -89,6 +92,30 @@ class AppRegistry:
 
     def list_apps(self) -> List[str]:
         return sorted(self._apps.keys())
+
+    def list_intents(self, app_id: str) -> List[str]:
+        spec = self.get(app_id)
+        return sorted(spec.intents.keys())
+
+    def list_exposed_intents(self, app_id: str) -> List[str]:
+        """
+        对外可见 intent 列表（exposed=True）
+        用于 API 文档展示、/query 参数校验
+        """
+        spec = self.get(app_id)
+        return sorted([k for k, v in spec.intents.items() if v.exposed])
+
+    def get_intent_spec(self, app_id: str, intent: str) -> IntentSpec:
+        spec = self.get(app_id)
+        if intent not in spec.intents:
+            raise KeyError(f"intent 未在 intents.yaml 声明: app_id={app_id}, intent={intent}")
+        return spec.intents[intent]
+
+    def is_intent_exposed(self, app_id: str, intent: str) -> bool:
+        try:
+            return self.get_intent_spec(app_id, intent).exposed
+        except KeyError:
+            return False
 
     # ------------------------------------------------------------
     # 内部：yaml / 校验 / intent 解析
@@ -121,11 +148,14 @@ class AppRegistry:
 
     @staticmethod
     def _parse_intents(intents_raw: Dict[str, Any]) -> Dict[str, IntentSpec]:
-        # 支持格式：
-        # intents:
-        #   ask_question:
-        #     description: ...
-        #     params: [...]
+        """
+        支持格式：
+        intents:
+          ask_question:
+            description: ...
+            params: [...]
+            exposed: true/false   #可选，默认 true
+        """
         intents_block = intents_raw.get("intents") or {}
         if not isinstance(intents_block, dict):
             raise ValueError("intents.yaml 必须包含 intents: dict")
@@ -134,17 +164,29 @@ class AppRegistry:
         for name, meta in intents_block.items():
             if not isinstance(name, str) or not name.strip():
                 continue
+
             meta = meta or {}
             if not isinstance(meta, dict):
                 meta = {}
 
             desc = str(meta.get("description", "") or "")
+
             params = meta.get("params", []) or []
             if not isinstance(params, list):
                 raise ValueError(f"intent={name} 的 params 必须为 list")
-
             params_norm = tuple(str(p) for p in params if str(p).strip())
-            intents[name] = IntentSpec(name=name, description=desc, params=params_norm)
+
+            exposed_val = meta.get("exposed", True)
+            if exposed_val not in (True, False):
+                raise ValueError(f"intent={name} 的 exposed 必须为 bool")
+            exposed = bool(exposed_val)
+
+            intents[name] = IntentSpec(
+                name=name,
+                description=desc,
+                params=params_norm,
+                exposed=exposed,
+            )
 
         if not intents:
             raise ValueError("intents.yaml 中 intents 不能为空")

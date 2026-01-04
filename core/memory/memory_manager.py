@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import uuid
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from identity.models import Identity
 from datasource.base import Datasource
@@ -22,7 +22,7 @@ class MemoryManager:
     """
     Memory 服务门面：
     - push：从 MinIO 读取业务端已写入的 session_history.json，然后写入主记忆(SQLite)+辅助记忆(Weaviate)
-    - get_context：摘要 + 向量检索
+    - get_context：summary + 主记忆未摘要最近对话（时间线） + 向量检索命中
     """
 
     def __init__(self, ds: Datasource, llm: LLMClient, embedder: EmbeddingClient):
@@ -45,7 +45,6 @@ class MemoryManager:
         RAG 按约定路径拼接读取：
           memory/{wallet_id}/{app_id}/{session_id}/{filename}
         """
-        # 1) 拼接 url（key）
         url = PathBuilder.business_file(identity, filename)
 
         if not self.ds.minio:
@@ -62,7 +61,6 @@ class MemoryManager:
             raise ValueError("Invalid session history json: messages must be a list")
 
         results = []
-
         for msg in messages:
             role = (msg.get("role") or "user").strip()
             content = (msg.get("content") or "").strip()
@@ -72,25 +70,20 @@ class MemoryManager:
             uid = str(uuid.uuid4())
             sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-            # A) SQLite：主记忆元信息（逐条）
             meta = self.primary.record_message(
                 identity=identity,
                 uid=uid,
                 role=role,
-                url=url,  # 每条消息指向同一个业务文件
+                url=url,
                 content_sha256=sha,
                 description=description or filename,
             )
 
-            # B) Weaviate：辅助记忆（逐条）
             self.aux.write(identity=identity, uid=uid, text=content, role=role)
 
             results.append(meta)
 
-        # C) bump_qa：按本次写入消息条数递增（你已修正为 delta=len(messages) 的方向）
         self.ds.memory_primary.bump_qa(identity.memory_key, delta=len(results))
-
-        # D) 尝试摘要（内部会读取未摘要条目 + 写入 summary）
         self.primary.maybe_summarize(identity, self.llm)
 
         return {
@@ -99,7 +92,60 @@ class MemoryManager:
             "metas": results,
         }
 
+    def _load_primary_recent(self, identity: Identity) -> List[Dict[str, Any]]:
+        if not self.ds.minio:
+            return []
+
+        rows = self.ds.memory_contexts.list_all_unsummarized(identity.memory_key)
+        if not rows:
+            return []
+
+        bucket = self.ds.bucket
+        json_cache: Dict[str, dict] = {}
+        out: List[Dict[str, Any]] = []
+
+        for r in rows:
+            url = r.get("url")
+            sha = r.get("content_sha256")
+            role = r.get("role", "user")
+
+            if not url or not sha:
+                continue
+
+            if url not in json_cache:
+                raw = self.ds.minio.get_text(bucket=bucket, key=url)
+                if not raw:
+                    continue
+                try:
+                    json_cache[url] = json.loads(raw)
+                except Exception:
+                    continue
+
+            data = json_cache[url]
+            for msg in data.get("messages", []):
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                if hashlib.sha256(content.encode("utf-8")).hexdigest() == sha:
+                    out.append(
+                        {
+                            "role": msg.get("role", role),
+                            "text": content,
+                            "source": "primary",
+                            "url": url,
+                        }
+                    )
+                    break
+
+        return out
+
     def get_context(self, identity: Identity, query: str) -> Dict[str, Any]:
         summary = self.primary.get_summary(identity)
+        primary_recent = self._load_primary_recent(identity)
         aux_hits = self.aux.search(identity, query)
-        return {"summary": summary, "auxiliary": aux_hits}
+
+        return {
+            "summary": summary,
+            "primary_recent": primary_recent,
+            "auxiliary": aux_hits,
+        }

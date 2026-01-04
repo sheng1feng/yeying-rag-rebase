@@ -130,6 +130,7 @@ def get_prompt_builder() -> PromptBuilder:
 def get_orchestrator() -> QueryOrchestrator:
     return QueryOrchestrator(
         identity_manager=get_identity_manager(),
+        app_registry=get_app_registry(),
         memory_manager=get_memory_manager(),
         kb_manager=get_kb_manager(),
         prompt_builder=get_prompt_builder(),

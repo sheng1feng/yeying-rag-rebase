@@ -7,6 +7,9 @@ memory:
   summary_threshold: 20
   retrieval_top_k: 5
 
+context:
+  max_chars: 1200
+
 knowledge_bases:
   jd_kb:
     type: static_kb
@@ -16,6 +19,6 @@ knowledge_bases:
 
   user_profile_kb:
     type: user_upload
-    collection: kb_user_profile    # 你可按 wallet_id 或统一 collection + filters（推荐统一）
+    collection: kb_user_profile
     weight: 1.0
     top_k: 5

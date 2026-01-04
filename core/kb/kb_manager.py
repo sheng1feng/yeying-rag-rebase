@@ -9,141 +9,157 @@ from ..embedding.embedding_client import EmbeddingClient
 from identity.models import Identity
 
 
+def _as_int(v: Any, default: int) -> int:
+    try:
+        if v is None:
+            return default
+        return int(v)
+    except Exception:
+        return default
+
+
+def _as_float(v: Any, default: float) -> float:
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+
+def _score_from_meta(meta: Dict[str, Any]) -> float:
+    """
+    Weaviate 可能返回 metadata.score 或 metadata.distance
+    统一输出：越大越相关
+    """
+    if not meta:
+        return 0.0
+
+    raw_score = meta.get("score")
+    if raw_score is not None:
+        try:
+            return float(raw_score)
+        except Exception:
+            return 0.0
+
+    dist = meta.get("distance")
+    if dist is not None:
+        try:
+            # 简单转换：1 - distance（你也可以换归一化策略）
+            return 1.0 - float(dist)
+        except Exception:
+            return 0.0
+
+    return 0.0
+
+
 class KnowledgeBaseManager:
     """
     KB 统一检索入口（中台核心组件）
-    - 多 KB 检索
-    - KB 内部只做：embedding(query) -> weaviate.search -> 统一结构 -> 合并排序
-    - 不做：chunk / rerank / prompt
+    - 由插件 config.yaml 的 knowledge_bases 驱动
+    - 每个 KB 可配置：type / collection / top_k / weight
+    - user_upload 采用统一 collection + filters（wallet_id + allowed_apps）
     """
 
-    # 一些常见的文本字段回退（避免业务 schema 不一致导致“明明召回了但 text 为空”）
-    _TEXT_FALLBACK_FIELDS = ("text", "content", "body", "document", "raw")
-
-    def __init__(self, ds, embedding_client: EmbeddingClient, kb_registry: KBRegistry):
+    def __init__(self, ds, embedding_client: EmbeddingClient, kb_registry=None):
         self.ds = ds
         self.embedding = embedding_client
+        # kb_registry 保留兼容（但中台化版本不依赖它）
         self.registry = kb_registry
 
     def search(
         self,
         identity: Identity,
         query: str,
+        kb_configs: Optional[Dict[str, Any]] = None,
         global_top_k: Optional[int] = None,
     ) -> List[KBContextBlock]:
-
-        kb_list = self.registry.get_kbs(identity.app_id)
-        if not kb_list or not self.ds.weaviate or not query:
+        if not query or not self.ds.weaviate:
             return []
 
-        # ------------------------------------------------------------------
-        # P1 修复：Embedding 必须用 embed_one（或 embed([query])[0]）
-        # ------------------------------------------------------------------
+        kb_configs = kb_configs or {}
+        if not isinstance(kb_configs, dict) or not kb_configs:
+            # 没有声明 KB，则不检索
+            return []
+
+        # 1) query embedding
         qvec = self.embedding.embed_one(query, app_id=identity.app_id)
 
         blocks: List[KBContextBlock] = []
 
-        for kb in kb_list:
-            top_k = max(int(kb.top_k or 1), 1)
+        # 2) 遍历插件声明的 KB
+        for kb_key, cfg in kb_configs.items():
+            if not isinstance(cfg, dict):
+                continue
 
-            # ------------------------------------------------------------------
-            # P1 修复：用户私有 KB 必须加过滤（至少 wallet_id + allowed_apps）
-            # 注意：这里用 dict 表达 filter，你的 WeaviateStore.search 需要支持它。
-            # 如果某些 collection 没这些字段，Weaviate 可能报错；因此做“字段不存在就降级”的容错。
-            # ------------------------------------------------------------------
-            filters = None
-            if kb.is_user_kb:
-                # 最小约束：同 wallet + 当前 app 可见
-                filters = {
-                    "wallet_id": identity.wallet_id,
-                    "allowed_apps": identity.app_id,
-                }
+            kb_type = str(cfg.get("type") or "")
+            collection = str(cfg.get("collection") or "").strip()
+            if not collection:
+                # 没声明 collection 直接跳过
+                continue
 
+            top_k = _as_int(cfg.get("top_k"), 5)
+            weight = _as_float(cfg.get("weight"), 1.0)
+
+            # 3) filters（user_upload 推荐统一 collection + filters）
+            filters: Dict[str, Any] = {}
+
+            if kb_type == "user_upload":
+                # 必须按 wallet_id 过滤，避免不同用户互相看到
+                filters["wallet_id"] = identity.wallet_id
+
+                # 如果你在写入 user_upload KB 的时候给每条 chunk/文档存了 allowed_apps
+                # 那就按 app_id 再过滤一层（可选但强烈建议）
+                filters["allowed_apps"] = identity.app_id
+
+            # static_kb 通常不需要 filter
+
+            # 4) weaviate search
             try:
                 hits = self.ds.weaviate.search(
-                    collection=kb.collection,
+                    collection=collection,
                     query_vector=qvec,
-                    top_k=top_k,
-                    filters=filters,
+                    top_k=max(top_k, 0),
+                    filters=filters if filters else None,
                 )
             except Exception:
-                # 降级：如果过滤字段不存在（历史 collection），则退回无过滤，但要在 metadata 标注风险
-                hits = self.ds.weaviate.search(
-                    collection=kb.collection,
-                    query_vector=qvec,
-                    top_k=top_k,
-                    filters=None,
-                )
-                # 下面 metadata 中会打标记：filter_degraded=True
+                continue
 
-            for h in hits:
-                props: Dict[str, Any] = h.get("properties") or {}
-                meta: Dict[str, Any] = h.get("metadata") or {}
+            # 5) 统一成 KBContextBlock
+            for h in hits or []:
+                props = h.get("properties") or {}
+                meta = h.get("metadata") or {}
 
-                # ------------------------------------------------------------------
-                # 文本字段：优先 kb.text_field，其次 fallback
-                # ------------------------------------------------------------------
-                text = props.get(kb.text_field)
-                if not text:
-                    for f in self._TEXT_FALLBACK_FIELDS:
-                        text = props.get(f)
-                        if text:
-                            break
+                text = props.get("text") or props.get("content") or ""
                 if not text:
                     continue
 
-                # ------------------------------------------------------------------
-                # P1 修复：统一 score 语义
-                # - 有些返回 score，有些返回 distance
-                # - 最终输出 score 必须是 “越大越相关”
-                # ------------------------------------------------------------------
-                raw_score = meta.get("score")
-                distance = meta.get("distance")
+                base_score = _score_from_meta(meta)
+                final_score = base_score * weight
 
-                if raw_score is None:
-                    if distance is not None:
-                        # 将距离转换为相似度（简单 1-distance；后续你可以换更合理的归一化）
-                        raw_score = 1.0 - float(distance)
-                    else:
-                        raw_score = 0.0
-
-                # ------------------------------------------------------------------
-                # 权重：KB 层只做“加权得分”，后续 rerank 再融合更复杂策略
-                # ------------------------------------------------------------------
-                weight = float(kb.weight if kb.weight is not None else 1.0)
-                if weight < 0:
-                    weight = 0.0
-                weighted_score = float(raw_score) * weight
-
-                # 附加元信息，方便后续 Orchestrator / PromptBuilder 做来源标注
                 enriched_meta = dict(props)
                 enriched_meta.update(
                     {
-                        "kb_name": kb.name,
-                        "kb_collection": kb.collection,
-                        "kb_weight": weight,
-                        "raw_score": float(raw_score),
-                        "distance": (float(distance) if distance is not None else None),
-                        "is_user_kb": bool(kb.is_user_kb),
-                        # 若上面发生过过滤降级，这里提示风险（无法严格校验时不应 silent）
-                        "filter_degraded": bool(kb.is_user_kb and filters is not None and ("wallet_id" not in props and "allowed_apps" not in props)),
+                        "_collection": collection,
+                        "_kb_key": kb_key,
+                        "_kb_type": kb_type,
+                        "_weight": weight,
+                        "_base_score": base_score,
                     }
                 )
 
                 blocks.append(
                     KBContextBlock(
-                        type="kb",
-                        source=kb.name,
+                        kb_key=kb_key,
+                        source=collection,
                         text=text,
-                        score=weighted_score,
+                        score=final_score,
                         metadata=enriched_meta,
                     )
                 )
 
-        # ------------------------------------------------------------------
-        # 合并排序（仅按 score），rerank 以后再接
-        # ------------------------------------------------------------------
-        blocks.sort(key=lambda b: b.score, reverse=True)
+        # 6) 合并排序（越大越相关）
+        blocks.sort(key=lambda b: float(b.score or 0.0), reverse=True)
 
         if global_top_k is not None:
             global_top_k = max(int(global_top_k), 0)
