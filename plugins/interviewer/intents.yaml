@@ -1,0 +1,29 @@
+intents:
+  generate_questions:
+    description: 基于 JD + 简历/画像 + 历史上下文，生成三类面试题（基础/项目/场景）
+    params:
+      - target_position
+      - company
+      - basic_count
+      - project_count
+      - scenario_count
+      - max_chars
+      - jd_top_k
+      - memory_top_k
+
+  basic_questions:
+    description: 生成基础知识与技能题
+    params:
+      - basic_count
+
+  project_questions:
+    description: 生成项目深度题（避免与基础题重复）
+    params:
+      - project_count
+      - previous_basic
+
+  scenario_questions:
+    description: 生成场景分析题（避免与已有题重复）
+    params:
+      - scenario_count
+      - previous_all

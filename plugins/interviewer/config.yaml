@@ -1,0 +1,21 @@
+app_id: interviewer
+display_name: 面试官服务
+enabled: true
+
+memory:
+  enabled: true
+  summary_threshold: 20
+  retrieval_top_k: 5
+
+knowledge_bases:
+  jd_kb:
+    type: static_kb
+    collection: kb_interviewer_jd
+    weight: 0.4
+    top_k: 3
+
+  user_profile_kb:
+    type: user_upload
+    collection: kb_user_profile    # 你可按 wallet_id 或统一 collection + filters（推荐统一）
+    weight: 1.0
+    top_k: 5
