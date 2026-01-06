@@ -4,7 +4,7 @@
 from __future__ import annotations
 from typing import List, Dict, Optional
 import weaviate.classes.config as wc
-
+import uuid
 from ..embedding.embedding_client import EmbeddingClient
 from identity.models import Identity
 from datasource.base import Datasource
@@ -24,6 +24,12 @@ class AuxiliaryMemory:
         self.embedding = embedding_client
         self._schema_ready = False
 
+    @ staticmethod
+    def _stable_uuid(uid: str) -> str:
+        """
+        将业务侧 uid 映射为合法 UUID（幂等且可复现）。
+        """
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, str(uid)))
     # ---------------------------------------------------
     # 写入
     # ---------------------------------------------------
@@ -51,7 +57,7 @@ class AuxiliaryMemory:
             collection=self.COLLECTION_NAME,
             vector=vector,
             properties=properties,
-            object_id=uid,
+            object_id=self._stable_uuid(uid),
         )
 
     # ---------------------------------------------------
@@ -80,7 +86,7 @@ class AuxiliaryMemory:
             # 统一 score 语义
             score = meta.get("score")
             if score is None and meta.get("distance") is not None:
-                score = 1.0 - meta["distance"]
+                score = 1.0 / (1.0 + float(meta["distance"]))
 
             results.append({
                 "uid": props.get("uid"),

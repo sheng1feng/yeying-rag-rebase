@@ -7,6 +7,7 @@ from typing import Dict, Any
 @dataclass
 class KBContextBlock:
     type: str                 # "kb"
+    kb_key: str
     source: str               # kb_name
     text: str                 # 用于 prompt 的主要文本
     score: float

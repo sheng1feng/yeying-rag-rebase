@@ -13,6 +13,6 @@ class ModelRegistry:
     路由模型
     """
 
-    def get_provider(self, *, app_id: str | None = None, intent: str | None = None):
+    def get_provider(self, *, settings, app_id: str | None = None, intent: str | None = None):
         # 暂时 v1：统一模型
-        return OpenAILLMProvider()
+        return OpenAILLMProvider(settings)

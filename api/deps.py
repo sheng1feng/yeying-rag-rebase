@@ -46,12 +46,12 @@ def get_datasource() -> Datasource:
 # -------------------------------------------------
 @lru_cache(maxsize=1)
 def get_embedding_client() -> EmbeddingClient:
-    return EmbeddingClient()
+    return EmbeddingClient(get_settings())
 
 
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
-    return LLMClient()
+    return LLMClient(get_settings())
 
 
 # -------------------------------------------------
@@ -90,7 +90,7 @@ def get_identity_manager() -> IdentityManager:
     apps = get_app_registry()
     return IdentityManager(
         session_store=get_session_store(),
-        registered_apps=set(apps.list_apps()),
+        app_registry=apps,
     )
 
 

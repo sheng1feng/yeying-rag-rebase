@@ -139,10 +139,10 @@ class MemoryManager:
 
         return out
 
-    def get_context(self, identity: Identity, query: str) -> Dict[str, Any]:
+    def get_context(self, identity: Identity, query: str, top_k: int = 5) -> Dict[str, Any]:
         summary = self.primary.get_summary(identity)
         primary_recent = self._load_primary_recent(identity)
-        aux_hits = self.aux.search(identity, query)
+        aux_hits = self.aux.search(identity, query, top_k=top_k)
 
         return {
             "summary": summary,

@@ -38,7 +38,8 @@ class AppRegistry:
 
     def __init__(self, project_root: str, plugins_dirname: str = "plugins") -> None:
         self.project_root = Path(project_root)
-        self.plugins_root = self.project_root / plugins_dirname
+        # TODO 这里应该改为项目名，此处暂制定为"yeying-rag-rebase"
+        self.plugins_root = self.project_root /"yeying-rag-rebase"/ plugins_dirname
         self._apps: Dict[str, AppSpec] = {}
 
     # ------------------------------------------------------------

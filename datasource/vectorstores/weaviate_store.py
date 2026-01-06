@@ -100,14 +100,14 @@ class WeaviateStore:
         ids: Optional[List[str]] = None,
     ) -> List[str]:
         col = self.client.collections.get(norm(collection))
-        out = []
+        out: List[str] = []
 
         with col.batch.dynamic() as batch:
             for i, props in enumerate(properties_list):
                 uid = ids[i] if ids else None
                 vec = vectors[i]
                 if uid:
-                    col.data.replace(uuid=uid, properties=props, vector=vec)
+                    batch.add_object(properties=props, vector=vec, uuid=uid)
                     out.append(uid)
                 else:
                     r = batch.add_object(properties=props, vector=vec)
@@ -145,9 +145,10 @@ class WeaviateStore:
             score = 1 / (1 + dist) if dist is not None else 0.0
             hits.append({
                 "properties": props,
-                "score": score,
-                "distance": dist,
-                "id": str(obj.uuid),
+                "metadata": {
+                    "score": score,
+                    "distance": dist,
+                },
             })
         return hits
 
@@ -180,11 +181,12 @@ class WeaviateStore:
 
         hits = []
         for obj in res.objects or []:
+            props = obj.properties or {}
             hits.append({
-                "id": str(obj.uuid),
-                "text": obj.properties.get("text"),
-                "metadata": obj.properties,
-                "score": getattr(obj.metadata, "score", None),
+                "properties": props,
+                "metadata": {
+                    "score": getattr(obj.metadata, "score", None),
+                },
             })
         return hits
 

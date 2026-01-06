@@ -1,7 +1,9 @@
 # settings/config.py
 from pydantic import BaseModel
 import os
-
+from dotenv import load_dotenv
+# ===== 只加载一次 .env =====
+load_dotenv(override=True)
 
 class Settings(BaseModel):
     # ---------- MinIO ----------
@@ -30,7 +32,10 @@ class Settings(BaseModel):
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_api_base: str = os.getenv("OPENAI_API_BASE", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "")
-    openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "")
 
+    embed_model: str = os.getenv("EMBED_MODEL", "")
+    embed_api_key: str = os.getenv("EMBED_API_KEY", "")
+    embed_api_base: str = os.getenv("EMBED_API_BASE", "")
+    embed_dim: int = os.getenv("EMBEDDING_DIM", "")
     # ---------- Plugins ----------
     plugins_auto_register: str = os.getenv("PLUGINS_AUTO_REGISTER", "interviewer")

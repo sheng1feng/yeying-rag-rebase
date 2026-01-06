@@ -45,8 +45,7 @@ def _score_from_meta(meta: Dict[str, Any]) -> float:
     dist = meta.get("distance")
     if dist is not None:
         try:
-            # 简单转换：1 - distance（你也可以换归一化策略）
-            return 1.0 - float(dist)
+            return 1.0 / (1.0 + float(dist))
         except Exception:
             return 0.0
 
@@ -108,11 +107,11 @@ class KnowledgeBaseManager:
                 # 必须按 wallet_id 过滤，避免不同用户互相看到
                 filters["wallet_id"] = identity.wallet_id
 
-                # 如果你在写入 user_upload KB 的时候给每条 chunk/文档存了 allowed_apps
+                # 如果在写入 user_upload KB 的时候给每条 chunk/文档存了 allowed_apps
                 # 那就按 app_id 再过滤一层（可选但强烈建议）
-                filters["allowed_apps"] = identity.app_id
+                if cfg.get("use_allowed_apps_filter"):
+                    filters["allowed_apps"] = identity.app_id
 
-            # static_kb 通常不需要 filter
 
             # 4) weaviate search
             try:

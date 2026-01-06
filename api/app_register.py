@@ -43,22 +43,24 @@ def register_app(req: AppRegisterReq, deps=Depends(get_deps)):
         app_registry = deps.app_registry
         pipeline_registry = deps.pipeline_registry
 
-        # 1️⃣ 注册 App（加载 config / intents / prompts）
-        # 兼容不同命名方式
-        if hasattr(app_registry, "register_app"):
-            app_spec = app_registry.register_app(app_id)
-        elif hasattr(app_registry, "register"):
-            app_spec = app_registry.register(app_id)
-        elif hasattr(app_registry, "load_app"):
-            app_spec = app_registry.load_app(app_id)
-        else:
-            raise RuntimeError(
-                "AppRegistry 缺少 register_app / register / load_app 方法"
-            )
-
-        # 2️⃣ 注册 Pipeline
-        # PipelineRegistry 只关心 app_id / pipeline.py
-        pipeline_registry.register(app_id)
+        # # 1️⃣ 注册 App（加载 config / intents / prompts）
+        # # 兼容不同命名方式
+        # if hasattr(app_registry, "register_app"):
+        #     app_spec = app_registry.register_app(app_id)
+        # elif hasattr(app_registry, "register"):
+        #     app_spec = app_registry.register(app_id)
+        # elif hasattr(app_registry, "load_app"):
+        #     app_spec = app_registry.load_app(app_id)
+        # else:
+        #     raise RuntimeError(
+        #         "AppRegistry 缺少 register_app / register / load_app 方法"
+        #     )
+        #
+        # # 2️⃣ 注册 Pipeline
+        # # PipelineRegistry 只关心 app_id / pipeline.py
+        # pipeline_registry.register_pipeline(app_spec, orchestrator=deps.orchestrator)
+        app_spec = app_registry.register_app(app_id)
+        pipeline_registry.register_pipeline(app_spec=app_spec,orchestrator=deps.orchestrator,)
 
         return AppRegisterResp(app_id=app_id, status="ok")
 

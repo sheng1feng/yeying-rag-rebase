@@ -138,8 +138,9 @@ class QueryOrchestrator:
         app_id = identity.app_id
 
         # 1) 读取插件 config（所有策略从这里来）
-        app_spec = self.app_registry.get_app(app_id)
-        if not app_spec:
+        try:
+            app_spec = self.app_registry.get(app_id)
+        except KeyError:
             raise RuntimeError(f"App not registered: {app_id}")
 
         cfg: Dict[str, Any] = app_spec.config or {}

@@ -167,8 +167,8 @@ class InterviewerPipeline:
     - 解析完全放在 pipeline 中（不增加中台复杂度）
     """
 
-    def __init__(self):
-        self.orchestrator = None  # 运行时注入
+    def __init__(self, orchestrator = None):
+        self.orchestrator = orchestrator  # 运行时注入
 
     def run(
         self,

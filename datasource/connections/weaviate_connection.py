@@ -1,5 +1,6 @@
 # rag/datasource/connections/weaviate_connection.py
 from typing import Optional, Dict
+import weaviate
 from weaviate import connect_to_custom, WeaviateClient
 from weaviate.classes.init import Auth
 from .common import HealthResult
@@ -41,7 +42,18 @@ class WeaviateConnection:
                 grpc_secure=self.secure,
                 auth_credentials=auth,
                 headers=self.extra_headers or None,
+                skip_init_checks=True,
             )
+        print(self._client.is_ready())
+
+        # if self._client is None:
+        #     self._client = weaviate.connect_to_weaviate_cloud(
+        #                     cluster_url="hgqma0vthirrqg7eao9cw.c0.asia-southeast1.gcp.weaviate.cloud",
+        #                     auth_credentials=Auth.api_key(self.api_key) if self.api_key else None,
+        #                     skip_init_checks=True,
+        #                     )
+        # print(self._client.is_ready())
+
         return self._client
 
     def health(self, enabled: bool) -> HealthResult:
