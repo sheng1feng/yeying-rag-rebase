@@ -12,51 +12,42 @@ router = APIRouter()
 @router.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest, deps=Depends(get_deps)):
     """
-    /query 的唯一职责：
-    1. 生成 Identity
-    2. 校验 intent（仅允许 exposed intents）
-    3. 找到对应 app 的 pipeline
-    4. 把 orchestrator 注入 pipeline
-    5. 调用 pipeline.run(...)
+    /query 的职责：
+    1) 查 DB：app 是否 active
+    2) 生成 Identity（IdentityManager 内部也会查 DB）
+    3) 校验 intent（仅 exposed intents）
+    4) 按需加载 pipeline（不依赖内存预注册）
+    5) 调用 pipeline.run(...)
     """
     try:
-        # 1️⃣ 生成 Identity（统一入口）
+        # 0) DB 单一事实源：必须 active
+        row = deps.datasource.app_store.get(req.app_id)
+        if not row or row.get("status") != "active":
+            raise HTTPException(status_code=400, detail=f"app_id={req.app_id} not active in DB")
+
+        # 1) Identity（内部会再校验一次 active）
         identity = deps.identity_manager.resolve_identity(
             wallet_id=req.wallet_id,
             app_id=req.app_id,
             session_id=req.session_id,
         )
 
-        # 2️⃣ 确保 app 已加载到 AppRegistry（以便做 exposed intent 校验）
-        # 说明：/app/register 会做更完整的注册（含 pipeline 注册），这里仅保证 app_spec 可用
-        if hasattr(deps, "app_registry") and deps.app_registry is not None:
-            if not deps.app_registry.is_registered(req.app_id):
-                deps.app_registry.register_app(req.app_id)
-
-        # 3️⃣ intent 校验：只允许 exposed intents（避免对子 intent 直接调用）
-        if hasattr(deps, "app_registry") and deps.app_registry is not None:
-            if not deps.app_registry.is_intent_exposed(req.app_id, req.intent):
-                exposed = deps.app_registry.list_exposed_intents(req.app_id)
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"intent={req.intent} 未对外暴露（internal intent）。"
-                        f"请使用对外 intent：{exposed}"
-                    ),
-                )
-
-        # 4️⃣ 获取 pipeline
-        pipeline = deps.pipeline_registry.get(req.app_id)
-        if pipeline is None:
+        # 2) intent 校验：只允许 exposed intents
+        if not deps.app_registry.is_intent_exposed(req.app_id, req.intent):
+            exposed = deps.app_registry.list_exposed_intents(req.app_id)
             raise HTTPException(
                 status_code=400,
-                detail=f"app_id={req.app_id} 未注册 pipeline，请先调用 /app/register",
+                detail=(
+                    f"intent={req.intent} 未对外暴露（internal intent）。"
+                    f"请使用对外 intent：{exposed}"
+                ),
             )
 
-        # 5️⃣ 注入 orchestrator（运行期）
+        # 3) 按需加载 pipeline（不依赖 /app/register 预注册）
+        pipeline = deps.pipeline_registry.get(req.app_id)
         pipeline.orchestrator = deps.orchestrator
 
-        # 6️⃣ 调用 pipeline
+        # 4) run
         result = pipeline.run(
             identity=identity,
             intent=req.intent,
@@ -64,11 +55,7 @@ def query(req: QueryRequest, deps=Depends(get_deps)):
             intent_params=req.intent_params or {},
         )
 
-        # 7️⃣ 返回（保持 QueryResponse 兼容）
-        return QueryResponse(
-            answer=result,
-            meta={},
-        )
+        return QueryResponse(answer=result)
 
     except HTTPException:
         raise

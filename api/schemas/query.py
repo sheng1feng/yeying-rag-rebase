@@ -12,5 +12,4 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    answer: list[str]
-    meta: Optional[Dict[str, Any]] = None
+    answer: dict

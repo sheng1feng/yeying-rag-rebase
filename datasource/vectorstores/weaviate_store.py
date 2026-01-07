@@ -9,24 +9,23 @@ WeaviateStore（新版，无业务，无 schema）
 """
 
 from __future__ import annotations
-import json
+
 from typing import List, Dict, Any, Optional
 
 import weaviate
 import weaviate.classes.config as wc
 import weaviate.classes.query as wq
 from weaviate.classes.query import Filter
-from weaviate.exceptions import UnexpectedStatusCodeError
 
 from datasource.connections.weaviate_connection import WeaviateConnection
 
 
-def norm(name: str) -> str:
-    """合法化 collection 名"""
-    s = "".join(ch for ch in name if ch.isalnum()) or "C"
-    if not s[0].isalpha():
-        s = "C" + s
-    return s[0].upper() + s[1:]
+def _safe_name(name: str) -> str:
+    """轻量校验：不改写，仅防空字符串。"""
+    s = (name or "").strip()
+    if not s:
+        raise ValueError("collection name is empty")
+    return s
 
 
 class WeaviateStore:
@@ -39,7 +38,7 @@ class WeaviateStore:
     # ---------------- Collection 管理 ----------------
 
     def create_collection(self, name: str, properties: List[wc.Property], embedding: bool = True):
-        col = norm(name)
+        col = _safe_name(name)
         vector_cfg = wc.Configure.Vectors.self_provided() if embedding else None
 
         self.client.collections.create(
@@ -48,24 +47,45 @@ class WeaviateStore:
             vector_config=vector_cfg,
         )
 
+
     def ensure_collection(self, name: str, properties: List[wc.Property]):
-        """Memory/Kb 模块用，Datasource 不会调用"""
-        col = norm(name)
+        """Memory/Kb 模块用：确保 collection 存在（幂等）"""
+        col = _safe_name(name)
+
+        # 1) 先用 list_all 判断是否存在（这是会真实访问服务端的）
         try:
-            existing = self.client.collections.get(col)
-            # 尝试补字段
-            for p in properties:
-                try:
-                    existing.config.add_property(p)
-                except:
-                    pass
-        except:
-            # 创建
-            self.client.collections.create(
-                name=col,
-                properties=properties,
-                vector_config=wc.Configure.Vectors.self_provided(),
-            )
+            existing_names = set(self.list_collections())
+        except Exception as e:
+            print(f"[weaviate][ensure_collection] list_collections failed: err={e}")
+            raise
+
+        if col not in existing_names:
+            # 2) 不存在：创建
+            try:
+                self.client.collections.create(
+                    name=col,
+                    properties=properties,
+                    vector_config=wc.Configure.Vectors.self_provided(),
+                )
+            except Exception as e_create:
+                print(f"[weaviate][ensure_collection] create FAILED: col={col} err={e_create}")
+                raise
+
+            # 3) 创建后再验证一次，确保真的创建成功
+            existing_names = set(self.list_collections())
+            if col not in existing_names:
+                raise RuntimeError(f"[weaviate][ensure_collection] create returned but collection not found: {col}")
+
+            return  # 创建完成即可
+
+        # 4) 已存在：才尝试补字段
+        existing = self.client.collections.get(col)
+        for p in properties:
+            try:
+                existing.config.add_property(p)
+            except Exception as e:
+                # 补字段失败不应影响主流程（幂等 + 兼容）
+                print(f"[weaviate][ensure_collection] add_property failed: col={col} prop={p.name} err={e}")
 
     def list_collections(self) -> List[str]:
         cols = self.client.collections.list_all()
@@ -83,7 +103,7 @@ class WeaviateStore:
         properties: Dict[str, Any],
         object_id: Optional[str] = None,
     ) -> str:
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
 
         if object_id:
             col.data.replace(uuid=object_id, properties=properties, vector=vector)
@@ -99,7 +119,7 @@ class WeaviateStore:
         properties_list: List[Dict[str, Any]],
         ids: Optional[List[str]] = None,
     ) -> List[str]:
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
         out: List[str] = []
 
         with col.batch.dynamic() as batch:
@@ -124,7 +144,7 @@ class WeaviateStore:
         top_k: int = 8,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
         where = None
 
         if filters:
@@ -163,7 +183,7 @@ class WeaviateStore:
         top_k: int = 8,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
 
         where = None
         if filters:
@@ -193,11 +213,11 @@ class WeaviateStore:
     # ---------------- 删除 ----------------
 
     def delete_by_id(self, collection: str, object_id: str):
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
         col.data.delete_by_id(object_id)
 
     def delete_by_filter(self, collection: str, filters: Dict[str, Any]):
-        col = self.client.collections.get(norm(collection))
+        col = self.client.collections.get(_safe_name(collection))
         clauses = [Filter.by_property(k).equal(v) for k, v in filters.items()]
         where = Filter.all_of(clauses)
         col.data.delete_many(where=where)

@@ -33,7 +33,7 @@ class OpenAILLMProvider:
 
 
         # OpenAI 官方 Python SDK client
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0, max_retries=2)
 
     def chat(
         self,

@@ -3,6 +3,7 @@
 
 from typing import Dict, Any, List, Optional
 
+from datasource.sqlstores.app_registry_store import AppRegistryStore
 from identity.identity_manager import IdentityManager
 from identity.models import Identity
 from .app_registry import AppRegistry
@@ -86,6 +87,7 @@ class QueryOrchestrator:
         *,
         identity_manager: IdentityManager,
         app_registry: AppRegistry,
+        app_store: AppRegistryStore,
         memory_manager: MemoryManager,
         kb_manager: KnowledgeBaseManager,
         prompt_builder: PromptBuilder,
@@ -93,6 +95,7 @@ class QueryOrchestrator:
     ):
         self.identity_manager = identity_manager
         self.app_registry = app_registry
+        self.app_store = app_store
         self.memory_manager = memory_manager
         self.kb_manager = kb_manager
         self.prompt_builder = prompt_builder
@@ -137,13 +140,12 @@ class QueryOrchestrator:
         intent_params = intent_params or {}
         app_id = identity.app_id
 
-        # 1) 读取插件 config（所有策略从这里来）
-        try:
-            app_spec = self.app_registry.get(app_id)
-        except KeyError:
-            raise RuntimeError(f"App not registered: {app_id}")
-
+        row = self.app_store.get(app_id)
+        if not row or row.get("status") != "active":
+            raise RuntimeError(f"app_id={app_id} not active in DB")
+        app_spec = self.app_registry.get(app_id)
         cfg: Dict[str, Any] = app_spec.config or {}
+
 
         memory_cfg: Dict[str, Any] = cfg.get("memory", {}) or {}
         kb_cfg: Dict[str, Any] = cfg.get("knowledge_bases", {}) or {}

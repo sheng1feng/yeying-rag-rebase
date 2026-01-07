@@ -13,11 +13,11 @@ from datasource.base import Datasource
 class AuxiliaryMemory:
     """
     辅助记忆（向量检索）
-    - 使用统一 collection：memory_vectors
+    - 使用统一 collection：MemoryVectors
     - 按 memory_key 过滤
     """
 
-    COLLECTION_NAME = "memory_vectors"
+    COLLECTION_NAME = "MemoryVectors"
 
     def __init__(self, ds: Datasource, embedding_client: EmbeddingClient):
         self.ds = ds
@@ -67,6 +67,9 @@ class AuxiliaryMemory:
     def search(self, identity: Identity, query: str, top_k: int = 5) -> List[Dict]:
         if not self.ds.weaviate or not query:
             return []
+        if not self._schema_ready:
+            self._ensure_collection()
+            self._schema_ready = True
 
         top_k = max(top_k, 1)
         qvector = self.embedding.embed_one(query, app_id=identity.app_id)

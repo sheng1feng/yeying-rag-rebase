@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -15,7 +15,6 @@ class IntentSpec:
     name: str
     description: str = ""
     params: Tuple[str, ...] = ()
-    # ✅ 新增：是否对外暴露（默认 True）
     exposed: bool = True
 
 
@@ -29,28 +28,23 @@ class AppSpec:
 
 class AppRegistry:
     """
-    App 插件注册表：负责发现/校验/加载 plugins/<app_id> 目录中的声明文件。
-
-    - 只做“插件元信息”管理：config.yaml、intents.yaml、prompts存在性、pipeline.py存在性
-    - 不做：LLM/KB/Memory 逻辑
-    - 不做：真正实例化 pipeline（那是 PipelineRegistry 的职责）
+    App 插件加载器（不再承担“注册事实”）：
+    - 负责从 plugins/<app_id> 目录加载 config.yaml / intents.yaml / prompts
+    - 不负责：是否启用（由 SQLite app_registry 表决定）
+    - 不负责：pipeline 实例化（由 PipelineRegistry 按需加载）
     """
 
     def __init__(self, project_root: str, plugins_dirname: str = "plugins") -> None:
         self.project_root = Path(project_root)
-        # TODO 这里应该改为项目名，此处暂制定为"yeying-rag-rebase"
-        self.plugins_root = self.project_root /"yeying-rag-rebase"/ plugins_dirname
-        self._apps: Dict[str, AppSpec] = {}
+        self.plugins_root = self.project_root / plugins_dirname
 
-    # ------------------------------------------------------------
-    # 外部入口：注册一个 app
-    # ------------------------------------------------------------
+    def get(self, app_id: str) -> AppSpec:
+        # 不做内存注册校验，直接按需加载
+        return self.register_app(app_id)
+
     def register_app(self, app_id: str) -> AppSpec:
         if not app_id:
             raise ValueError("app_id 不能为空")
-
-        if app_id in self._apps:
-            return self._apps[app_id]
 
         plugin_dir = self.plugins_root / app_id
         if not plugin_dir.exists():
@@ -62,7 +56,6 @@ class AppRegistry:
         self._validate_config(app_id, config)
         intents = self._parse_intents(intents_raw)
 
-        # prompts 目录检查（至少 system.md 存在；intent 的 md 可以按需缺省，但建议严格校验）
         prompts_dir = plugin_dir / "prompts"
         if not prompts_dir.exists():
             raise FileNotFoundError(f"prompts 目录不存在: {prompts_dir}")
@@ -71,38 +64,32 @@ class AppRegistry:
         if not system_md.exists():
             raise FileNotFoundError(f"缺少 prompts/system.md: {system_md}")
 
-        app_spec = AppSpec(
+        return AppSpec(
             app_id=app_id,
             plugin_dir=plugin_dir,
             config=config,
             intents=intents,
         )
-        self._apps[app_id] = app_spec
-        return app_spec
-
-    # ------------------------------------------------------------
-    # 查询 / 列表
-    # ------------------------------------------------------------
-    def get(self, app_id: str) -> AppSpec:
-        if app_id not in self._apps:
-            raise KeyError(f"app_id 尚未注册: {app_id}")
-        return self._apps[app_id]
 
     def is_registered(self, app_id: str) -> bool:
-        return app_id in self._apps
+        # 语义调整：这里只判断插件是否存在；是否启用请查 DB
+        try:
+            d = self.plugins_root / app_id
+            return d.exists() and d.is_dir()
+        except Exception:
+            return False
 
     def list_apps(self) -> List[str]:
-        return sorted(self._apps.keys())
+        # 直接扫描 plugins 目录（不依赖内存）
+        if not self.plugins_root.exists():
+            return []
+        return sorted([p.name for p in self.plugins_root.iterdir() if p.is_dir()])
 
     def list_intents(self, app_id: str) -> List[str]:
         spec = self.get(app_id)
         return sorted(spec.intents.keys())
 
     def list_exposed_intents(self, app_id: str) -> List[str]:
-        """
-        对外可见 intent 列表（exposed=True）
-        用于 API 文档展示、/query 参数校验
-        """
         spec = self.get(app_id)
         return sorted([k for k, v in spec.intents.items() if v.exposed])
 
@@ -118,9 +105,9 @@ class AppRegistry:
         except KeyError:
             return False
 
-    # ------------------------------------------------------------
-    # 内部：yaml / 校验 / intent 解析
-    # ------------------------------------------------------------
+    # -------------------------
+    # Internal helpers
+    # -------------------------
     @staticmethod
     def _load_yaml(path: Path) -> Dict[str, Any]:
         if not path.exists():
@@ -132,7 +119,6 @@ class AppRegistry:
 
     @staticmethod
     def _validate_config(app_id: str, config: Dict[str, Any]) -> None:
-        # 最小校验：app_id 匹配，enabled 可选
         cfg_app_id = (config.get("app_id") or "").strip()
         if cfg_app_id and cfg_app_id != app_id:
             raise ValueError(f"config.yaml 中 app_id={cfg_app_id} 与目录 app_id={app_id} 不一致")
@@ -141,7 +127,6 @@ class AppRegistry:
         if enabled not in (True, False):
             raise ValueError("config.yaml enabled 必须为 bool")
 
-        # memory / knowledge_bases 可选，但若存在必须是 dict
         if "memory" in config and not isinstance(config["memory"], dict):
             raise ValueError("config.yaml memory 必须为 dict")
         if "knowledge_bases" in config and not isinstance(config["knowledge_bases"], dict):
@@ -149,14 +134,6 @@ class AppRegistry:
 
     @staticmethod
     def _parse_intents(intents_raw: Dict[str, Any]) -> Dict[str, IntentSpec]:
-        """
-        支持格式：
-        intents:
-          ask_question:
-            description: ...
-            params: [...]
-            exposed: true/false   #可选，默认 true
-        """
         intents_block = intents_raw.get("intents") or {}
         if not isinstance(intents_block, dict):
             raise ValueError("intents.yaml 必须包含 intents: dict")

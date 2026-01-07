@@ -17,7 +17,7 @@ from datasource.sqlstores.identity_session_store import IdentitySessionStore
 from datasource.sqlstores.memory_primary_store import MemoryPrimaryStore
 from datasource.sqlstores.memory_contexts_store import MemoryContextsStore
 from datasource.sqlstores.memory_metadata_store import MemoryMetadataStore
-
+from datasource.sqlstores.app_registry_store import AppRegistryStore
 
 class Datasource:
     """
@@ -37,6 +37,7 @@ class Datasource:
         self.memory_primary = MemoryPrimaryStore(self.sqlite_conn)
         self.memory_contexts = MemoryContextsStore(self.sqlite_conn)
         self.memory_metadata = MemoryMetadataStore(self.sqlite_conn)
+        self.app_store = AppRegistryStore(self.sqlite_conn)
 
         # ---------- MinIO ----------
         self.minio_conn = MinioConnection(

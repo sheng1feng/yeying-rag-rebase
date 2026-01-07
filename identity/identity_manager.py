@@ -4,7 +4,7 @@
 from __future__ import annotations
 import hashlib
 from typing import Optional
-from core.orchestrator.app_registry import AppRegistry
+from datasource.sqlstores.app_registry_store import AppRegistryStore
 from .models import Identity
 from .session_store import SessionStore
 
@@ -18,18 +18,19 @@ class IdentityManager:
     - 给 pipeline/orchestrator 返回 Identity 对象
     """
 
-    def __init__(self, session_store: SessionStore, app_registry: AppRegistry):
+    def __init__(self, session_store: SessionStore, app_store: AppRegistryStore):
         """
         :param session_store: identity/session_store.py 包装的 store
-        :param app_registry: AppRegistry 实例，用于动态判断 app 是否已注册
+        :param app_store: 用于动态判断 app 是否已注册
         """
         self.session_store = session_store
-        self.app_registry = app_registry
+        self.app_store = app_store
 
     # ---------- app 校验 ----------
     def ensure_app_exists(self, app_id: str):
-        if not self.app_registry.is_registered(app_id):
-            raise ValueError(f"Unregistered app_id: {app_id}")
+        row = self.app_store.get(app_id)
+        if not row or row.get("status") != "active":
+            raise ValueError(f"Inactive/Unregistered app_id: {app_id}")
 
     # ---------- memory_key 生成 ----------
     @staticmethod

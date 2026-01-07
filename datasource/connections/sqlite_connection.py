@@ -92,6 +92,14 @@ CREATE INDEX IF NOT EXISTS idx_memory_contexts_memory_created
 
 CREATE INDEX IF NOT EXISTS idx_memory_contexts_wallet_created
   ON memory_contexts (wallet_id, created_at DESC);
+  
+-- App 注册表（记录哪些 app 被启用）
+CREATE TABLE IF NOT EXISTS app_registry (
+  app_id       TEXT PRIMARY KEY,
+  status       TEXT NOT NULL DEFAULT 'active',
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 

@@ -14,10 +14,13 @@ from __future__ import annotations
 ## 业务怎么和我进行数据交互
 ## 用户调我的push，我返回一个地址给业务，业务带着这个地址对我进行访问。
 ## file地址，应该是列表
+from __future__ import annotations
+
 import json
 import re
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
+# 仅用于从模型输出中提取 JSON 对象（若模型偶尔仍输出额外文本）
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -41,6 +44,11 @@ def _as_dict(v: Any) -> Dict[str, Any]:
 
 
 def _normalize_questions(v: Any) -> List[str]:
+    """
+    只做非常轻量的规范化：保证 list[str]、strip、去空。
+    不做复杂清洗，因为提示词要求“只输出严格 JSON”，
+    解析层应当尽量简单，避免产生新的不确定性。
+    """
     if not isinstance(v, list):
         return []
     out: List[str] = []
@@ -53,121 +61,101 @@ def _normalize_questions(v: Any) -> List[str]:
     return out
 
 
-def _try_json_obj(s: str) -> Optional[Dict[str, Any]]:
-    try:
-        obj = json.loads(s)
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
-
-
-def _extract_json_obj(s: str) -> Optional[Dict[str, Any]]:
+def _try_parse_questions_json(text: str) -> List[str]:
     """
-    1) 直接 json.loads
-    2) 抽取首个 {...} 子串再 json.loads（应对模型输出前后夹杂说明文字）
+    期望输入是严格 JSON：
+      {"questions": ["...","..."]}
+    但为防止偶发前后夹杂文本，这里支持：
+      1) 直接 json.loads
+      2) 抽取首个 {...} 再 json.loads
     """
-    s = (s or "").strip()
-    if not s:
-        return None
-
-    obj = _try_json_obj(s)
-    if obj is not None:
-        return obj
-
-    m = _JSON_BLOCK_RE.search(s)
-    if not m:
-        return None
-    return _try_json_obj(m.group(0).strip())
-
-
-def _fallback_split_questions(s: str) -> List[str]:
-    """
-    JSON 失败时兜底：
-    - 按行拆分
-    - 去掉 1. / 1) / - / * / • 等前缀
-    - 过滤空行
-    """
-    text = (s or "").strip()
+    text = (text or "").strip()
     if not text:
         return []
 
-    lines = [ln.strip().strip("`") for ln in text.splitlines()]
-    lines = [ln for ln in lines if ln]
+    # 1) 直接 loads
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "questions" in obj:
+            return _normalize_questions(obj.get("questions"))
+    except Exception:
+        pass
 
-    out: List[str] = []
-    for ln in lines:
-        ln2 = re.sub(r"^\s*(\d+[\.\)、)]\s*|[-*•]\s*)", "", ln).strip()
-        if len(ln2) >= 4:
-            out.append(ln2)
+    # 2) 尝试提取 {...}
+    m = _JSON_BLOCK_RE.search(text)
+    if not m:
+        return []
 
-    # 极端情况仍为空：把全文按句号/分号拆一下
-    if not out:
-        chunks = re.split(r"[。；;\n]+", text)
-        for c in chunks:
-            c = c.strip()
-            if len(c) >= 6:
-                out.append(c)
+    try:
+        obj2 = json.loads(m.group(0))
+        if isinstance(obj2, dict) and "questions" in obj2:
+            return _normalize_questions(obj2.get("questions"))
+    except Exception:
+        return []
 
-    return out
+    return []
 
 
 def parse_questions_from_orchestrator_result(res: Any) -> List[str]:
     """
-    允许 orchestrator 返回：
-    - {"answer": {"questions":[...]}}  （结构化）
-    - {"answer": {"content":"..."}}    （包装文本）
-    - {"answer": "..." }              （纯文本）
-    - 或者其它：尽力转成字符串解析
-    最终保证返回 questions 非空（至少 1 条）。
+    Orchestrator 可能返回：
+      - {"answer": {"questions": [...]}}                 # 结构化
+      - {"answer": {"content": "...JSON..."}}            # 包装一层
+      - {"answer": "...JSON..."}                         # 纯字符串
+      - {"answer": "..."}                                # 极端：非 JSON（按你的提示词应当不会发生）
+    解析策略：
+      - 优先从结构化字段取 questions
+      - 否则从字符串里解析 JSON（严格 JSON / 提取 JSON block）
+      - 不再做“按行拆分兜底”，避免把噪声当作题目
     """
-    # 1) res dict
     if isinstance(res, dict):
         ans = res.get("answer")
 
-        # answer 已结构化
+        # 1) answer 是 dict：优先 questions，其次 content
         if isinstance(ans, dict):
             if "questions" in ans:
                 qs = _normalize_questions(ans.get("questions"))
-                if qs:
-                    return qs
+                return qs
 
-            # 如果只有 content
             content = ans.get("content")
-            if isinstance(content, str) and content.strip():
-                return parse_questions_from_orchestrator_result({"answer": content})
+            if isinstance(content, str):
+                return _try_parse_questions_json(content)
 
-        # answer 是字符串
+            return []
+
+        # 2) answer 是 str：直接解析 JSON
         if isinstance(ans, str):
-            raw = ans.strip()
+            return _try_parse_questions_json(ans)
 
-            obj = _extract_json_obj(raw)
-            if isinstance(obj, dict) and "questions" in obj:
-                qs = _normalize_questions(obj.get("questions"))
-                if qs:
-                    return qs
+        return []
 
-            qs2 = _fallback_split_questions(raw)
-            if qs2:
-                return qs2
+    # 3) 其它类型：尽力转字符串再解析 JSON
+    try:
+        return _try_parse_questions_json(str(res))
+    except Exception:
+        return []
 
-            return [raw] if raw else ["（模型未返回有效题目，请重试）"]
 
-    # 2) 其它类型兜底
-    raw2 = str(res).strip()
-    if not raw2:
-        return ["（模型未返回有效题目，请重试）"]
-    return [raw2]
+def _jsonify_for_prompt(v: Any) -> str:
+    """
+    模板里需要 previous_basic / previous_all：
+    用 JSON 字符串传递，避免 Python list 的 repr 干扰模型。
+    """
+    try:
+        return json.dumps(v, ensure_ascii=False)
+    except Exception:
+        return "[]"
 
 
 class InterviewerPipeline:
     """
-    面试官 pipeline（轻量方案）
+    面试官 pipeline（收敛版）
     - 对外只支持 generate_questions
     - 内部串 basic/project/scenario
-    - 解析完全放在 pipeline 中（不增加中台复杂度）
+    - 依赖提示词保证严格 JSON 输出，pipeline 仅做最小解析与计数裁剪
     """
 
-    def __init__(self, orchestrator = None):
+    def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator  # 运行时注入
 
     def run(
@@ -198,60 +186,62 @@ class InterviewerPipeline:
 
         questions: List[str] = []
 
-        # 1) basic
-        res_basic = self.orchestrator.run_with_identity(
-            identity=identity,
-            intent="basic_questions",
-            user_query=user_query,
-            intent_params={
-                "basic_count": basic_count,
-                "target_position": target_position,
-                "company": company,
-            },
-        )
-        basic_qs = parse_questions_from_orchestrator_result(res_basic)
-        # 尊重 count（如果模型返回多了，裁剪）
+        # ---------- 1) basic ----------
+        basic_qs: List[str] = []
         if basic_count > 0:
-            basic_qs = basic_qs[:basic_count]
-        questions.extend(basic_qs)
+            res_basic = self.orchestrator.run_with_identity(
+                identity=identity,
+                intent="basic_questions",
+                user_query=user_query,
+                intent_params={
+                    "basic_count": basic_count,
+                    "target_position": target_position,
+                    "company": company,
+                },
+            )
+            basic_qs = parse_questions_from_orchestrator_result(res_basic)[:basic_count]
+            questions.extend(basic_qs)
 
-        # 2) project
-        res_proj = self.orchestrator.run_with_identity(
-            identity=identity,
-            intent="project_questions",
-            user_query=user_query,
-            intent_params={
-                "project_count": project_count,
-                "previous_basic": basic_qs,
-                "target_position": target_position,
-                "company": company,
-            },
-        )
-        proj_qs = parse_questions_from_orchestrator_result(res_proj)
+        # ---------- 2) project ----------
+        proj_qs: List[str] = []
         if project_count > 0:
-            proj_qs = proj_qs[:project_count]
-        questions.extend(proj_qs)
+            res_proj = self.orchestrator.run_with_identity(
+                identity=identity,
+                intent="project_questions",
+                user_query=user_query,
+                intent_params={
+                    "project_count": project_count,
+                    # 模板里用于避免重复：强烈建议传 JSON 字符串
+                    "previous_basic": _jsonify_for_prompt(basic_qs),
+                    "target_position": target_position,
+                    "company": company,
+                },
+            )
+            proj_qs = parse_questions_from_orchestrator_result(res_proj)[:project_count]
+            questions.extend(proj_qs)
 
-        # 3) scenario
-        res_scn = self.orchestrator.run_with_identity(
-            identity=identity,
-            intent="scenario_questions",
-            user_query=user_query,
-            intent_params={
-                "scenario_count": scenario_count,
-                "previous_all": questions,
-                "target_position": target_position,
-                "company": company,
-            },
-        )
-        scn_qs = parse_questions_from_orchestrator_result(res_scn)
+        # ---------- 3) scenario ----------
+        scn_qs: List[str] = []
         if scenario_count > 0:
-            scn_qs = scn_qs[:scenario_count]
-        questions.extend(scn_qs)
+            res_scn = self.orchestrator.run_with_identity(
+                identity=identity,
+                intent="scenario_questions",
+                user_query=user_query,
+                intent_params={
+                    "scenario_count": scenario_count,
+                    # 模板里用于避免重复：传“截至当前全部题”的 JSON 字符串
+                    "previous_all": _jsonify_for_prompt(questions),
+                    "target_position": target_position,
+                    "company": company,
+                },
+            )
+            scn_qs = parse_questions_from_orchestrator_result(res_scn)[:scenario_count]
+            questions.extend(scn_qs)
 
-        # 最终保证非空
+        # ---------- 兜底 ----------
         if not questions:
-            questions = ["（未生成有效题目，请重试）"]
+            # 这里不再塞各种“解释性长文本”，只给一条明确可用的提示
+            questions = ["（未生成有效题目：模型未按要求输出严格 JSON 或上下文为空）"]
 
         return {
             "questions": questions,

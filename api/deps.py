@@ -6,6 +6,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from datasource.sqlstores.app_registry_store import AppRegistryStore
 from settings.config import Settings
 from datasource.base import Datasource
 
@@ -23,6 +24,27 @@ from identity.session_store import SessionStore
 from core.orchestrator.query_orchestrator import QueryOrchestrator
 from core.orchestrator.app_registry import AppRegistry
 from core.orchestrator.pipeline_registry import PipelineRegistry
+from pathlib import Path
+
+def find_project_root(start: Path) -> Path:
+    """
+    从 start 开始向上查找项目根目录。
+    根目录判定依据（满足其一即可）：
+      - pyproject.toml
+      - .git
+      - plugins 目录
+      - config.yaml（按你项目习惯可调整）
+    """
+    start = start.resolve()
+    for p in [start, *start.parents]:
+        if (p / "pyproject.toml").exists():
+            return p
+        if (p / "plugins").is_dir():
+            return p
+        if (p / "config.yaml").exists():
+            return p
+    # 兜底：至少返回 start 的上级，避免 None
+    return start.parent
 
 
 # -------------------------------------------------
@@ -59,7 +81,8 @@ def get_llm_client() -> LLMClient:
 # -------------------------------------------------
 @lru_cache(maxsize=1)
 def get_app_registry() -> AppRegistry:
-    project_root = str(Path(__file__).resolve().parents[2])
+    project_root = str(find_project_root(Path(__file__).resolve()))
+    # print("project_root", project_root)
     return AppRegistry(
         project_root=project_root,
         plugins_dirname="plugins",
@@ -87,10 +110,10 @@ def get_session_store() -> SessionStore:
 
 @lru_cache(maxsize=1)
 def get_identity_manager() -> IdentityManager:
-    apps = get_app_registry()
+    ds = get_datasource()
     return IdentityManager(
         session_store=get_session_store(),
-        app_registry=apps,
+        app_store=ds.app_store,
     )
 
 
@@ -119,7 +142,7 @@ def get_kb_manager() -> KnowledgeBaseManager:
 
 @lru_cache(maxsize=1)
 def get_prompt_builder() -> PromptBuilder:
-    project_root = str(Path(__file__).resolve().parents[2])
+    project_root = str(find_project_root(Path(__file__).resolve()))
     return PromptBuilder(project_root=project_root)
 
 
@@ -128,9 +151,11 @@ def get_prompt_builder() -> PromptBuilder:
 # -------------------------------------------------
 @lru_cache(maxsize=1)
 def get_orchestrator() -> QueryOrchestrator:
+    ds = get_datasource()
     return QueryOrchestrator(
         identity_manager=get_identity_manager(),
         app_registry=get_app_registry(),
+        app_store=ds.app_store,
         memory_manager=get_memory_manager(),
         kb_manager=get_kb_manager(),
         prompt_builder=get_prompt_builder(),
@@ -186,6 +211,7 @@ def get_deps() -> Deps:
     prompt_builder = get_prompt_builder()
 
     orchestrator = get_orchestrator()
+    pipeline_registry.configure(app_registry, orchestrator)
 
     return Deps(
         settings=settings,
