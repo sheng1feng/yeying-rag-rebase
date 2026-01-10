@@ -13,7 +13,7 @@ context:
 knowledge_bases:
   jd_kb:
     type: static_kb
-    use_allowed_apps_filter: True
+    use_allowed_apps_filter: False
     collection: kb_interviewer_jd
     weight: 0.4
     top_k: 3

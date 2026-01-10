@@ -10,6 +10,7 @@ WeaviateStore（新版，无业务，无 schema）
 
 from __future__ import annotations
 
+import time
 from typing import List, Dict, Any, Optional
 
 import weaviate
@@ -71,22 +72,38 @@ class WeaviateStore:
                 print(f"[weaviate][ensure_collection] create FAILED: col={col} err={e_create}")
                 raise
 
-            # 3) 创建后再验证一次，确保真的创建成功
-            existing_names = set(self.list_collections())
-            if col not in existing_names:
-                raise RuntimeError(f"[weaviate][ensure_collection] create returned but collection not found: {col}")
+            # 3) 创建后轮询验证（处理一致性延迟）
+            #    总等待约 0.2+0.4+0.6+0.8+1.0+1.2 = 4.2 秒（可按需调整）
+            for i in range(6):
+                time.sleep(0.2 * (i + 1))
+                try:
+                    existing_names = set(self.list_collections())
+                except Exception as e_list:
+                    print(f"[weaviate][ensure_collection] post-create list failed: i={i} err={e_list}")
+                    continue
+                if col in existing_names:
+                    return  # ✅ 创建成功可见
 
-            return  # 创建完成即可
+                # 轮询后仍不可见：才报错
+            raise RuntimeError(
+                    f"[weaviate][ensure_collection] create returned but collection not found after retry: {col}"
+            )
 
-        # 4) 已存在：才尝试补字段
+                # 4) 已存在：才尝试补字段
         existing = self.client.collections.get(col)
         for p in properties:
             try:
                 existing.config.add_property(p)
             except Exception as e:
-                # 补字段失败不应影响主流程（幂等 + 兼容）
-                print(f"[weaviate][ensure_collection] add_property failed: col={col} prop={p.name} err={e}")
-
+                msg = str(e).lower()
+                if "already exists" in msg:
+                    # 正常幂等场景，静默跳过
+                    pass
+                else:
+                    print(
+                        f"[weaviate][ensure_collection] add_property unexpected error: "
+                        f"col={col} prop={p.name} err={e}"
+                    )
     def list_collections(self) -> List[str]:
         cols = self.client.collections.list_all()
         result = []
@@ -221,3 +238,21 @@ class WeaviateStore:
         clauses = [Filter.by_property(k).equal(v) for k, v in filters.items()]
         where = Filter.all_of(clauses)
         col.data.delete_many(where=where)
+
+    def get_properties_by_id(self, collection: str, object_id: str) -> Optional[Dict[str, Any]]:
+        """
+        通过 uuid 获取对象 properties。
+        - 存在：返回 dict
+        - 不存在：返回 None
+        """
+        col = self.client.collections.get(_safe_name(collection))
+        try:
+            obj = col.query.fetch_object_by_id(uuid=object_id)
+        except Exception:
+            # fetch 本身异常（网络/权限/协议），往上抛，让上层计入 errors
+            raise
+
+        if obj is None:
+            return None
+        props = getattr(obj, "properties", None)
+        return props or None
