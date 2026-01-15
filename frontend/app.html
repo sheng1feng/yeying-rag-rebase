@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RAG 应用控制台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body>
+    <div class="bg-gradient"></div>
+    <div class="bg-grid"></div>
+    <div class="bg-noise"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo-dot"></div>
+        <div class="brand-text">
+          <span>RAG 应用控制台</span>
+          <small id="app-title">加载中...</small>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="api-status">
+          <span class="status-dot" id="api-status-dot"></span>
+          <span id="api-status-text">离线</span>
+        </div>
+        <select id="app-switch"></select>
+        <div class="api-input">
+          <input
+            id="api-base"
+            type="text"
+            placeholder="API 地址（可选）"
+            autocomplete="off"
+          />
+          <button id="refresh-btn">刷新</button>
+        </div>
+        <button class="ghost" id="back-btn">返回</button>
+      </div>
+    </header>
+
+    <div class="layout single">
+      <main class="main">
+        <section class="hero reveal" data-section="overview">
+          <div class="hero-copy">
+            <h1 id="app-heading">应用控制台</h1>
+            <p id="app-summary">
+              管理当前应用的知识库、文档与记忆。
+            </p>
+            <div class="hero-actions">
+              <button class="primary" id="app-new-doc">新建文档</button>
+              <button class="ghost" id="app-ingestion">查看摄取日志</button>
+            </div>
+          </div>
+          <div class="hero-metrics">
+            <div class="metric-card">
+              <span class="metric-label">知识库数量</span>
+              <span class="metric-value" id="metric-kbs">0</span>
+              <span class="metric-trend" id="metric-kbs-trend">-</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">向量条目</span>
+              <span class="metric-value" id="metric-vectors">0</span>
+              <span class="metric-trend" id="metric-vectors-trend">-</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">摄取事件</span>
+              <span class="metric-value" id="metric-ingestion">0</span>
+              <span class="metric-trend" id="metric-ingestion-trend">-</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-row reveal" data-section="knowledge">
+          <div class="panel wide">
+            <div class="panel-header">
+              <div>
+                <h2>知识库</h2>
+                <p>当前应用的集合与数据配置。</p>
+              </div>
+              <div class="panel-tools">
+                <input id="kb-search" type="text" placeholder="搜索知识库" />
+                <button class="ghost" id="kb-filter-toggle">筛选</button>
+              </div>
+            </div>
+            <div class="filter-panel hidden" id="kb-filter-panel"></div>
+            <div class="table" id="kb-table"></div>
+          </div>
+          <div class="panel detail">
+            <div class="panel-header">
+              <div>
+                <h2 id="kb-detail-title">知识库详情</h2>
+                <p id="kb-detail-subtitle">请选择一个知识库查看。</p>
+              </div>
+              <button class="ghost" id="kb-schema-toggle">字段结构</button>
+            </div>
+            <div class="detail-body">
+              <div class="detail-grid">
+                <div>
+                  <span class="detail-label">集合名</span>
+                  <span class="detail-value" id="kb-detail-collection">-</span>
+                </div>
+                <div>
+                  <span class="detail-label">文档数</span>
+                  <span class="detail-value" id="kb-detail-docs">-</span>
+                </div>
+                <div>
+                  <span class="detail-label">向量数</span>
+                  <span class="detail-value" id="kb-detail-chunks">-</span>
+                </div>
+                <div>
+                  <span class="detail-label">权限</span>
+                  <span class="detail-value" id="kb-detail-access">-</span>
+                </div>
+              </div>
+              <div class="chart">
+                <div class="chart-bar" id="chart-bar-1"></div>
+                <div class="chart-bar" id="chart-bar-2"></div>
+                <div class="chart-bar" id="chart-bar-3"></div>
+                <div class="chart-bar" id="chart-bar-4"></div>
+              </div>
+              <div class="detail-log" id="kb-detail-log"></div>
+              <div class="schema-panel hidden" id="kb-schema-panel"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-row reveal single" data-section="documents">
+          <div class="panel" id="doc-panel">
+            <div class="panel-header">
+              <div>
+                <h2>文档</h2>
+                <p id="doc-subtitle">请选择知识库加载文档，点击行查看详情。</p>
+              </div>
+              <div class="panel-tools">
+                <input id="doc-search" type="text" placeholder="搜索文档" />
+                <button class="ghost" id="doc-refresh">刷新</button>
+                <button class="ghost" id="doc-toggle" aria-expanded="true">收起</button>
+              </div>
+            </div>
+            <div class="panel-body" id="doc-panel-body">
+              <div class="table doc-table" id="doc-table"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-row reveal" data-section="memory">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>记忆写入</h2>
+                <p>把会话历史写入长期记忆。</p>
+              </div>
+            </div>
+            <form id="memory-form" class="doc-form">
+              <div class="form-group">
+                <label for="memory-app-id">应用 ID</label>
+                <input id="memory-app-id" type="text" placeholder="interviewer" />
+              </div>
+              <div class="form-group">
+                <label for="memory-wallet-id">钱包 ID</label>
+                <input id="memory-wallet-id" type="text" placeholder="wallet_123" />
+              </div>
+              <div class="form-group">
+                <label for="memory-session-id">会话 ID</label>
+                <input id="memory-session-id" type="text" placeholder="session_abc" />
+              </div>
+              <div class="form-group">
+                <label for="memory-filename">会话文件路径</label>
+                <input id="memory-filename" type="text" placeholder="/path/to/session.json" />
+              </div>
+              <div class="form-group">
+                <label for="memory-description">描述</label>
+                <input id="memory-description" type="text" placeholder="面试会话 2024-04-01" />
+              </div>
+              <div class="form-group">
+                <label for="memory-threshold">摘要阈值</label>
+                <input id="memory-threshold" type="number" placeholder="可选覆盖" />
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="primary">写入记忆</button>
+              </div>
+              <p class="form-hint" id="memory-hint"></p>
+            </form>
+          </div>
+          <div class="panel detail">
+            <div class="panel-header">
+              <div>
+                <h2>记忆说明</h2>
+                <p>通过 /memory/push 写入摘要与元数据。</p>
+              </div>
+            </div>
+            <div class="detail-body">
+              <div class="detail-grid">
+                <div>
+                  <span class="detail-label">接口</span>
+                  <span class="detail-value">/memory/push</span>
+                </div>
+                <div>
+                  <span class="detail-label">存储</span>
+                  <span class="detail-value">SQLite + MinIO</span>
+                </div>
+              </div>
+              <div class="detail-log" id="memory-log">暂无记忆写入记录。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-row reveal single" data-section="ingestion">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>摄取时间线</h2>
+                <p>当前应用的最近摄取事件。</p>
+              </div>
+              <button class="ghost" id="ingestion-export">导出</button>
+            </div>
+            <div class="timeline" id="ingestion-timeline"></div>
+            <p class="form-hint" id="ingestion-hint"></p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="drawer" id="doc-drawer" aria-hidden="true">
+      <div class="drawer-backdrop" id="doc-drawer-backdrop"></div>
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <div>
+            <h3 id="drawer-title">文档详情</h3>
+            <p id="drawer-subtitle">查看字段与内容。</p>
+          </div>
+          <button class="ghost" id="drawer-close">关闭</button>
+        </div>
+        <div class="drawer-content">
+          <div class="detail-grid">
+            <div>
+              <span class="detail-label">文档 ID</span>
+              <span class="detail-value" id="drawer-doc-id">-</span>
+            </div>
+            <div>
+              <span class="detail-label">更新时间</span>
+              <span class="detail-value" id="drawer-doc-updated">-</span>
+            </div>
+            <div>
+              <span class="detail-label">创建时间</span>
+              <span class="detail-value" id="drawer-doc-created">-</span>
+            </div>
+            <div>
+              <span class="detail-label">字段数</span>
+              <span class="detail-value" id="drawer-doc-fields">-</span>
+            </div>
+          </div>
+          <div class="detail-log" id="drawer-doc-meta">等待选择文档。</div>
+
+          <div class="drawer-section">
+            <div class="drawer-section-header">
+              <h4>编辑文档</h4>
+              <button class="ghost" id="doc-delete">删除</button>
+            </div>
+            <form id="doc-form" class="doc-form">
+              <div class="form-group">
+                <label for="doc-id">文档 ID</label>
+                <input id="doc-id" type="text" placeholder="留空自动生成" />
+              </div>
+              <div class="form-group">
+                <label for="doc-text">主文本</label>
+                <textarea id="doc-text" rows="5" placeholder="用于向量化的正文内容"></textarea>
+              </div>
+              <div class="form-group">
+                <label for="doc-props">属性（JSON）</label>
+                <textarea id="doc-props" rows="6" placeholder='{"key":"value"}'></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="ghost" id="doc-reset">新建文档</button>
+                <button type="submit" class="primary" id="doc-save">保存</button>
+              </div>
+              <p class="form-hint" id="doc-hint"></p>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
