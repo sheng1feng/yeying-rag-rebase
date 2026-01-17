@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="stylesheet" href="./assets/styles.css?v=20250118" />
   </head>
   <body>
     <div class="bg-gradient"></div>
@@ -72,17 +72,34 @@
           <div class="panel">
             <div class="panel-header">
               <div>
-                <h2>状态详情</h2>
-                <p>各后端的连接与诊断信息。</p>
+                <h2>健康检查</h2>
+                <p>各后端的连接、鉴权与诊断信息。</p>
               </div>
             </div>
             <div class="store-grid" id="store-grid"></div>
             <p class="form-hint" id="store-hint"></p>
           </div>
         </section>
+
+        <section class="panel-row reveal single">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>数据浏览入口</h2>
+                <p>从中台进入应用知识库与日志视图。</p>
+              </div>
+              <div class="panel-tools">
+                <span class="detail-label">当前应用</span>
+                <select id="store-app-select"></select>
+              </div>
+            </div>
+            <div class="store-browser-grid" id="store-browser-grid"></div>
+            <p class="form-hint" id="store-browser-hint"></p>
+          </div>
+        </section>
       </main>
     </div>
 
-    <script type="module" src="./src/stores.js"></script>
+    <script type="module" src="./src/stores.js?v=20250118"></script>
   </body>
 </html>

@@ -1,12 +1,73 @@
 # api/routers/query.py
 # -*- coding: utf-8 -*-
 
+import json
+from typing import Any, Optional, Tuple
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.schemas.query import QueryRequest, QueryResponse
 from api.deps import get_deps
+from api.routers.kb import _ensure_collection, _text_field_from_cfg
 
 router = APIRouter()
+
+
+def _resolve_user_upload_kb(deps, app_id: str) -> Tuple[Optional[str], Optional[dict]]:
+    try:
+        spec = deps.app_registry.get(app_id)
+    except Exception:
+        return None, None
+    cfg = spec.config or {}
+    kb_cfg = cfg.get("knowledge_bases", {}) or {}
+    if not isinstance(kb_cfg, dict):
+        return None, None
+    kb_aliases = (cfg.get("prompt", {}) or {}).get("kb_aliases", {}) or {}
+    alias_key = kb_aliases.get("resume_text")
+    if alias_key and alias_key in kb_cfg:
+        return str(alias_key), kb_cfg.get(alias_key) or {}
+    for key, item in kb_cfg.items():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").strip() == "user_upload":
+            return str(key), item
+    return None, None
+
+
+def _resolve_kb_aliases(deps, app_id: str) -> dict:
+    try:
+        spec = deps.app_registry.get(app_id)
+    except Exception:
+        return {}
+    cfg = spec.config or {}
+    kb_aliases = (cfg.get("prompt", {}) or {}).get("kb_aliases", {}) or {}
+    if not isinstance(kb_aliases, dict):
+        return {}
+    return kb_aliases
+
+
+def _extract_text_from_raw(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if text[:1] not in ("{", "["):
+        return text
+    try:
+        data = json.loads(text)
+    except Exception:
+        return text
+    if isinstance(data, dict):
+        for key in ("text", "content", "resume"):
+            val = data.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        segments = data.get("segments")
+        if isinstance(segments, list):
+            return "\n".join(str(x) for x in segments if x)
+        return text
+    if isinstance(data, list):
+        return "\n".join(str(x) for x in data if x)
+    return text
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -53,6 +114,81 @@ def query(req: QueryRequest, deps=Depends(get_deps)):
             intent_params["resume_url"] = req.resume_url
         if req.jd_url and "jd_url" not in intent_params:
             intent_params["jd_url"] = req.jd_url
+        if req.resume_id and "resume_id" not in intent_params:
+            intent_params["resume_id"] = req.resume_id
+        if req.jd_id and "jd_id" not in intent_params:
+            intent_params["jd_id"] = req.jd_id
+        if req.target and "target_position" not in intent_params:
+            intent_params["target_position"] = req.target
+        if req.company and "company" not in intent_params:
+            intent_params["company"] = req.company
+
+        if req.resume_id and "resume_text" not in intent_params and not req.resume_url:
+            try:
+                _, kb_cfg = _resolve_user_upload_kb(deps, req.app_id)
+                if kb_cfg:
+                    collection = _ensure_collection(deps, kb_cfg)
+                    filters: dict[str, Any] = {"resume_id": req.resume_id, "wallet_id": req.wallet_id}
+                    if kb_cfg.get("use_allowed_apps_filter"):
+                        filters["allowed_apps"] = req.app_id
+                    docs = deps.datasource.weaviate.fetch_objects(
+                        collection,
+                        limit=1,
+                        offset=0,
+                        filters=filters,
+                    )
+                    if docs:
+                        props = docs[0].get("properties") or {}
+                        text_field = _text_field_from_cfg(kb_cfg)
+                        resume_text = (
+                            props.get(text_field)
+                            or props.get("text")
+                            or props.get("content")
+                            or ""
+                        )
+                        if not resume_text:
+                            resume_text = _extract_text_from_raw(props.get("metadata_json") or "")
+                        if resume_text:
+                            intent_params["resume_text"] = resume_text
+            except Exception:
+                pass
+
+        if req.jd_id and "jd_text" not in intent_params and not req.jd_url:
+            try:
+                _, kb_cfg = _resolve_user_upload_kb(deps, req.app_id)
+                if kb_cfg:
+                    collection = _ensure_collection(deps, kb_cfg)
+                    filters: dict[str, Any] = {"jd_id": req.jd_id, "wallet_id": req.wallet_id}
+                    if kb_cfg.get("use_allowed_apps_filter"):
+                        filters["allowed_apps"] = req.app_id
+                    docs = deps.datasource.weaviate.fetch_objects(
+                        collection,
+                        limit=1,
+                        offset=0,
+                        filters=filters,
+                    )
+                    if docs:
+                        props = docs[0].get("properties") or {}
+                        text_field = _text_field_from_cfg(kb_cfg)
+                        jd_text = (
+                            props.get(text_field)
+                            or props.get("text")
+                            or props.get("content")
+                            or ""
+                        )
+                        if not jd_text:
+                            jd_text = _extract_text_from_raw(props.get("metadata_json") or "")
+                        if jd_text:
+                            intent_params["jd_text"] = jd_text
+                            kb_aliases = _resolve_kb_aliases(deps, req.app_id)
+                            jd_kb_key = kb_aliases.get("jd_text")
+                            if jd_kb_key:
+                                exclude = list(intent_params.get("_kb_exclude") or [])
+                                if jd_kb_key not in exclude:
+                                    exclude.append(jd_kb_key)
+                                intent_params["_kb_exclude"] = exclude
+            except Exception:
+                pass
 
         user_query = req.query or ""
         if not user_query and not intent_params:

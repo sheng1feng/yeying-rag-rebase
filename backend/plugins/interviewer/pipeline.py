@@ -57,6 +57,18 @@ def _clip_text(text: str, max_chars: int) -> str:
     return text
 
 
+def _default_query(target: str, company: str) -> str:
+    target = (target or "").strip()
+    company = (company or "").strip()
+    if target and company:
+        return f"请为{company}的{target}生成通用面试问题。"
+    if target:
+        return f"请为{target}生成通用面试问题。"
+    if company:
+        return f"请为{company}生成通用面试问题。"
+    return "请生成通用面试问题。"
+
+
 def _try_parse_questions_json(text: str) -> List[str]:
     """
     期望输入是严格 JSON：
@@ -175,7 +187,7 @@ class InterviewerPipeline:
         project_count = _as_int(p.get("project_count"), 3)
         scenario_count = _as_int(p.get("scenario_count"), 3)
 
-        target_position = _as_str(p.get("target_position"), "")
+        target_position = _as_str(p.get("target_position") or p.get("target"), "")
         company = _as_str(p.get("company"), "")
 
         if basic_count < 0 or project_count < 0 or scenario_count < 0:
@@ -214,9 +226,8 @@ class InterviewerPipeline:
                 user_query = _clip_text(resume_text, _QUERY_MAX_CHARS)
             elif jd_text:
                 user_query = _clip_text(jd_text, _QUERY_MAX_CHARS)
-
-        if not user_query:
-            raise ValueError("query or resume/jd is required")
+            else:
+                user_query = _default_query(target_position, company)
 
         base_params = dict(p)
         base_params.pop("resume_url", None)

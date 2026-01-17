@@ -36,12 +36,23 @@ def _build_filters(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
     return Filter.all_of(clauses)
 
 
+def _is_missing_class_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "could not find class" in msg or "not found in schema" in msg
+
+
+def _is_already_exists_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "already exists" in msg and "class name" in msg
+
+
 class WeaviateStore:
     """纯向量数据库客户端"""
 
     def __init__(self, conn: WeaviateConnection):
         self.conn = conn
         self.client: weaviate.WeaviateClient = conn.client
+        self._ensured: set[str] = set()
 
     # ---------------- Collection 管理 ----------------
 
@@ -60,6 +71,10 @@ class WeaviateStore:
         """Memory/Kb 模块用：确保 collection 存在（幂等）"""
         col = _safe_name(name)
 
+        if col in self._ensured:
+            self._ensure_properties(col, properties)
+            return
+
         # 1) 先用 list_all 判断是否存在（这是会真实访问服务端的）
         try:
             existing_names = set(self.list_collections())
@@ -67,7 +82,8 @@ class WeaviateStore:
             print(f"[weaviate][ensure_collection] list_collections failed: err={e}")
             raise
 
-        if col not in existing_names:
+        exists = col in existing_names
+        if not exists:
             # 2) 不存在：创建
             try:
                 self.client.collections.create(
@@ -76,28 +92,37 @@ class WeaviateStore:
                     vector_config=wc.Configure.Vectors.self_provided(),
                 )
             except Exception as e_create:
-                print(f"[weaviate][ensure_collection] create FAILED: col={col} err={e_create}")
-                raise
+                if _is_already_exists_error(e_create):
+                    exists = True
+                else:
+                    print(f"[weaviate][ensure_collection] create FAILED: col={col} err={e_create}")
+                    raise
 
             # 3) 创建后轮询验证（处理一致性延迟）
-            #    总等待约 0.2+0.4+0.6+0.8+1.0+1.2 = 4.2 秒（可按需调整）
-            for i in range(6):
-                time.sleep(0.2 * (i + 1))
-                try:
-                    existing_names = set(self.list_collections())
-                except Exception as e_list:
-                    print(f"[weaviate][ensure_collection] post-create list failed: i={i} err={e_list}")
-                    continue
-                if col in existing_names:
-                    return  # ✅ 创建成功可见
+            #    总等待约 0.4 * (1..10) = 22 秒（可按需调整）
+            if not exists:
+                for i in range(10):
+                    time.sleep(0.4 * (i + 1))
+                    try:
+                        existing_names = set(self.list_collections())
+                    except Exception as e_list:
+                        print(f"[weaviate][ensure_collection] post-create list failed: i={i} err={e_list}")
+                        continue
+                    if col in existing_names:
+                        exists = True
+                        break
 
-                # 轮询后仍不可见：才报错
-            raise RuntimeError(
-                    f"[weaviate][ensure_collection] create returned but collection not found after retry: {col}"
-            )
+        # 4) 已存在：才尝试补字段
+        self._ensure_properties(col, properties)
+        self._ensured.add(col)
 
-                # 4) 已存在：才尝试补字段
-        existing = self.client.collections.get(col)
+    def _ensure_properties(self, col: str, properties: List[wc.Property]) -> None:
+        try:
+            existing = self.client.collections.get(col)
+        except Exception as e_get:
+            if _is_missing_class_error(e_get):
+                return
+            raise
         for p in properties:
             try:
                 existing.config.add_property(p)
@@ -239,8 +264,19 @@ class WeaviateStore:
     def count(self, collection: str, filters: Optional[Dict[str, Any]] = None) -> int:
         col = self.client.collections.get(_safe_name(collection))
         where = _build_filters(filters)
-        res = col.aggregate.over_all(filters=where, total_count=True)
-        return int(getattr(res, "total_count", 0) or 0)
+        last_err = None
+        for i in range(5):
+            try:
+                res = col.aggregate.over_all(filters=where, total_count=True)
+                return int(getattr(res, "total_count", 0) or 0)
+            except Exception as e:
+                if not _is_missing_class_error(e):
+                    raise
+                last_err = e
+                time.sleep(0.4 * (i + 1))
+        if last_err:
+            raise last_err
+        return 0
 
     def fetch_objects(
         self,
@@ -253,14 +289,26 @@ class WeaviateStore:
     ) -> List[Dict[str, Any]]:
         col = self.client.collections.get(_safe_name(collection))
         where = _build_filters(filters)
-        res = col.query.fetch_objects(
-            limit=limit,
-            offset=offset,
-            filters=where,
-            include_vector=include_vector,
-            return_metadata=wq.MetadataQuery(creation_time=True, last_update_time=True),
-            return_properties=True,
-        )
+        last_err = None
+        for i in range(5):
+            try:
+                res = col.query.fetch_objects(
+                    limit=limit,
+                    offset=offset,
+                    filters=where,
+                    include_vector=include_vector,
+                    return_metadata=wq.MetadataQuery(creation_time=True, last_update_time=True),
+                    return_properties=True,
+                )
+                last_err = None
+                break
+            except Exception as e:
+                if not _is_missing_class_error(e):
+                    raise
+                last_err = e
+                time.sleep(0.4 * (i + 1))
+        if last_err:
+            raise last_err
 
         out = []
         for obj in getattr(res, "objects", []) or []:

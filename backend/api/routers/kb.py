@@ -1,7 +1,10 @@
 # api/routers/kb.py
 # -*- coding: utf-8 -*-
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+import weaviate.classes.config as wc
 
 from api.deps import get_deps
 from api.schemas.kb import (
@@ -29,6 +32,48 @@ def _resolve_kb_config(deps, app_id: str, kb_key: str) -> dict:
 
 def _text_field_from_cfg(cfg: dict) -> str:
     return str(cfg.get("text_field") or "text").strip() or "text"
+
+
+def _ensure_collection(deps, cfg: dict) -> str:
+    collection = str(cfg.get("collection") or "")
+    if not collection:
+        raise ValueError("collection is empty")
+    if not deps.datasource.weaviate:
+        raise RuntimeError("Weaviate is not enabled")
+
+    text_field = _text_field_from_cfg(cfg)
+    kb_type = str(cfg.get("type") or "").strip()
+
+    props = [
+        wc.Property(name=text_field, data_type=wc.DataType.TEXT),
+    ]
+
+    if kb_type == "user_upload":
+        props.extend(
+            [
+                wc.Property(name="wallet_id", data_type=wc.DataType.TEXT),
+                wc.Property(name="resume_id", data_type=wc.DataType.TEXT),
+                wc.Property(name="jd_id", data_type=wc.DataType.TEXT),
+                wc.Property(name="source_url", data_type=wc.DataType.TEXT),
+                wc.Property(name="metadata_json", data_type=wc.DataType.TEXT),
+            ]
+        )
+        if cfg.get("use_allowed_apps_filter"):
+            props.append(wc.Property(name="allowed_apps", data_type=wc.DataType.TEXT))
+
+    deps.datasource.weaviate.ensure_collection(collection, props)
+    return collection
+
+
+def _kb_filters(cfg: dict, app_id: str, wallet_id: Optional[str]) -> dict:
+    kb_type = str(cfg.get("type") or "").strip()
+    filters: dict = {}
+    if kb_type == "user_upload":
+        if wallet_id:
+            filters["wallet_id"] = wallet_id
+        if cfg.get("use_allowed_apps_filter"):
+            filters["allowed_apps"] = app_id
+    return filters
 
 
 @router.get("/list", response_model=list[KBInfo])
@@ -71,15 +116,12 @@ def list_kbs(deps=Depends(get_deps)):
 
 
 @router.get("/{app_id}/{kb_key}/stats", response_model=KBStats)
-def kb_stats(app_id: str, kb_key: str, deps=Depends(get_deps)):
+def kb_stats(app_id: str, kb_key: str, wallet_id: Optional[str] = None, deps=Depends(get_deps)):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
-        total = deps.datasource.weaviate.count(collection)
+        collection = _ensure_collection(deps, cfg)
+        filters = _kb_filters(cfg, app_id, wallet_id)
+        total = deps.datasource.weaviate.count(collection, filters=filters if filters else None)
         return KBStats(
             app_id=app_id,
             kb_key=kb_key,
@@ -92,15 +134,24 @@ def kb_stats(app_id: str, kb_key: str, deps=Depends(get_deps)):
 
 
 @router.get("/{app_id}/{kb_key}/documents", response_model=KBDocumentList)
-def list_documents(app_id: str, kb_key: str, limit: int = 20, offset: int = 0, deps=Depends(get_deps)):
+def list_documents(
+    app_id: str,
+    kb_key: str,
+    limit: int = 20,
+    offset: int = 0,
+    wallet_id: Optional[str] = None,
+    deps=Depends(get_deps),
+):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
-        items = deps.datasource.weaviate.fetch_objects(collection, limit=limit, offset=offset)
+        collection = _ensure_collection(deps, cfg)
+        filters = _kb_filters(cfg, app_id, wallet_id)
+        items = deps.datasource.weaviate.fetch_objects(
+            collection,
+            limit=limit,
+            offset=offset,
+            filters=filters if filters else None,
+        )
         normalized = []
         for item in items:
             normalized.append(
@@ -111,7 +162,7 @@ def list_documents(app_id: str, kb_key: str, limit: int = 20, offset: int = 0, d
                     updated_at=_to_iso(item.get("updated_at")),
                 )
             )
-        total = deps.datasource.weaviate.count(collection)
+        total = deps.datasource.weaviate.count(collection, filters=filters if filters else None)
         return KBDocumentList(items=normalized, total=total)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -156,11 +207,7 @@ def _resolve_text_and_vector(cfg: dict, req, deps, app_id: str) -> tuple[dict, l
 def create_document(app_id: str, kb_key: str, req: KBDocumentUpsert, deps=Depends(get_deps)):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
+        collection = _ensure_collection(deps, cfg)
 
         props, vector = _resolve_text_and_vector(cfg, req, deps, app_id)
         if vector is None:
@@ -189,11 +236,7 @@ def create_document(app_id: str, kb_key: str, req: KBDocumentUpsert, deps=Depend
 def replace_document(app_id: str, kb_key: str, doc_id: str, req: KBDocumentUpsert, deps=Depends(get_deps)):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
+        collection = _ensure_collection(deps, cfg)
 
         props, vector = _resolve_text_and_vector(cfg, req, deps, app_id)
         if vector is None:
@@ -222,11 +265,7 @@ def replace_document(app_id: str, kb_key: str, doc_id: str, req: KBDocumentUpser
 def update_document(app_id: str, kb_key: str, doc_id: str, req: KBDocumentUpdate, deps=Depends(get_deps)):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
+        collection = _ensure_collection(deps, cfg)
 
         props, vector = _resolve_text_and_vector(cfg, req, deps, app_id)
         deps.datasource.weaviate.update(
@@ -252,11 +291,7 @@ def update_document(app_id: str, kb_key: str, doc_id: str, req: KBDocumentUpdate
 def delete_document(app_id: str, kb_key: str, doc_id: str, deps=Depends(get_deps)):
     try:
         cfg = _resolve_kb_config(deps, app_id, kb_key)
-        collection = str(cfg.get("collection") or "")
-        if not collection:
-            raise ValueError("collection is empty")
-        if not deps.datasource.weaviate:
-            raise RuntimeError("Weaviate is not enabled")
+        collection = _ensure_collection(deps, cfg)
         deps.datasource.weaviate.delete_by_id(collection, doc_id)
         return {"status": "ok"}
     except Exception as e:

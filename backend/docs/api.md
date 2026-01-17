@@ -92,7 +92,7 @@ GET `/kb/list`
 
 ## Knowledge Base 统计
 
-GET `/kb/{app_id}/{kb_key}/stats`
+GET `/kb/{app_id}/{kb_key}/stats?wallet_id=optional`
 
 响应示例：
 ```json
@@ -104,12 +104,15 @@ GET `/kb/{app_id}/{kb_key}/stats`
   "chunk_count": 1280
 }
 ```
+说明：
+- 当 KB 类型为 `user_upload` 且开启 `use_allowed_apps_filter` 时，会按 `app_id` 过滤
+- 传入 `wallet_id` 时会进一步按用户过滤
 
 ---
 
 ## Knowledge Base 文档列表
 
-GET `/kb/{app_id}/{kb_key}/documents?limit=20&offset=0`
+GET `/kb/{app_id}/{kb_key}/documents?limit=20&offset=0&wallet_id=optional`
 
 响应示例：
 ```json
@@ -125,6 +128,9 @@ GET `/kb/{app_id}/{kb_key}/documents?limit=20&offset=0`
   "total": 1280
 }
 ```
+说明：
+- 当 KB 类型为 `user_upload` 且开启 `use_allowed_apps_filter` 时，会按 `app_id` 过滤
+- 传入 `wallet_id` 时会进一步按用户过滤
 
 ---
 
@@ -244,6 +250,81 @@ POST `/ingestion/logs`
 
 ---
 
+## 简历上传
+
+POST `/resume/upload`
+
+请求体：
+```json
+{
+  "wallet_id": "user_123",
+  "app_id": "interviewer",
+  "resume_id": "optional-resume-id",
+  "kb_key": "optional-user-upload-kb",
+  "metadata": {"source": "biz"},
+  "resume": {
+    "name": "Alex Chen",
+    "skills": ["python", "golang"],
+    "text": "Backend engineer with 5 years of experience."
+  }
+}
+```
+
+响应示例：
+```json
+{
+  "resume_id": "a8a3c9c0-2fd5-4d32-9c95-0f7c4c8763f4",
+  "kb_key": "user_profile_kb",
+  "collection": "kb_user_profile",
+  "doc_id": "b367956c-41b6-444c-881c-ef8bd62bcc98",
+  "source_url": "minio://bucket/kb/user_123/interviewer/resume/a8a3c9c0-2fd5-4d32-9c95-0f7c4c8763f4.json"
+}
+```
+
+说明：
+- 默认写入 app 下第一个 `user_upload` 类型 KB
+- `resume_id` 用于后续 `/query` 调用
+
+---
+
+## JD 上传
+
+POST `/{app_id}/jd/upload`
+
+请求体：
+```json
+{
+  "wallet_id": "user_123",
+  "app_id": "interviewer",
+  "jd_id": "optional-jd-id",
+  "kb_key": "optional-user-upload-kb",
+  "metadata": {"source": "biz"},
+  "jd": {
+    "title": "Backend Engineer",
+    "requirements": ["Python", "Distributed Systems"],
+    "text": "We are looking for a Backend Engineer..."
+  }
+}
+```
+
+响应示例：
+```json
+{
+  "jd_id": "7a4f0b4e-9d9f-4b9f-9b25-8f7b5a92a8a1",
+  "kb_key": "user_profile_kb",
+  "collection": "kb_user_profile",
+  "doc_id": "d2b5d3e4-1c1b-4d3f-8b5d-9e1f2a3b4c5d",
+  "source_url": "minio://bucket/kb/user_123/interviewer/jd/7a4f0b4e-9d9f-4b9f-9b25-8f7b5a92a8a1.json"
+}
+```
+
+说明：
+- 默认写入 app 下第一个 `user_upload` 类型 KB
+- `jd_id` 用于后续 `/query` 调用
+- 路径中的 `app_id` 为必填，Body 的 `app_id` 可选
+
+---
+
 ## 查询入口
 
 POST `/query`
@@ -256,8 +337,12 @@ POST `/query`
   "session_id": "session_001",
   "intent": "generate_questions",
   "query": "我是后端工程师，准备面试，请给我一些问题。",
+  "resume_id": "optional-resume-id",
+  "jd_id": "optional-jd-id",
   "resume_url": "minio://bucket/memory/.../resume.json",
   "jd_url": "minio://bucket/memory/.../jd.json",
+  "target": "后端工程师",
+  "company": "示例公司",
   "intent_params": {
     "basic_count": 2,
     "project_count": 1,
@@ -282,6 +367,12 @@ POST `/query`
 - `intent_params` 为插件自定义参数
 - `resume_url/jd_url` 会透传给插件处理（如 interviewer 可在 pipeline 中读取 MinIO 内容）
 - 若不提供 `query`，则插件可根据 `resume/jd` 补全
+- `resume_id` 为 `/resume/upload` 返回的简历 ID
+- `jd_id` 为 `/{app_id}/jd/upload` 返回的 JD ID
+- `target/company` 为快捷参数，内部会映射到 `intent_params.target_position/company`
+- 当 `resume_id` 不存在时，会走默认路径生成通用问题（不报错）
+- 当 `jd_id` 存在且可读取时，将跳过 JD 静态库检索
+- 当 `jd_id` 缺失或无效时，仍走默认 JD 检索通路
 
 ---
 

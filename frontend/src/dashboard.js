@@ -20,6 +20,12 @@ const heroSettings = document.getElementById("hero-settings");
 const metricApps = document.getElementById("metric-apps");
 const metricKbs = document.getElementById("metric-kbs");
 const metricVectors = document.getElementById("metric-vectors");
+const metricIngestion = document.getElementById("metric-ingestion");
+const metricIngestionTrend = document.getElementById("metric-ingestion-trend");
+
+const heroApiStatus = document.getElementById("hero-api-status");
+const heroIngestionTime = document.getElementById("hero-ingestion-time");
+const heroVectors = document.getElementById("hero-vectors");
 
 const appSearch = document.getElementById("app-search");
 const appGrid = document.getElementById("app-grid");
@@ -34,6 +40,9 @@ function setStatus(online) {
     ? "0 0 12px rgba(57, 217, 138, 0.7)"
     : "0 0 12px rgba(255, 106, 136, 0.7)";
   statusText.textContent = online ? "在线" : "离线";
+  if (heroApiStatus) {
+    heroApiStatus.textContent = online ? "在线" : "离线";
+  }
 }
 
 function applyData(data) {
@@ -46,6 +55,18 @@ function applyData(data) {
   metricApps.textContent = state.apps.filter((app) => app.status === "active").length;
   metricKbs.textContent = state.knowledgeBases.length;
   metricVectors.textContent = new Intl.NumberFormat().format(state.vectors);
+  if (metricIngestion) {
+    metricIngestion.textContent = state.ingestionRaw.length;
+  }
+  if (metricIngestionTrend) {
+    metricIngestionTrend.textContent = state.ingestionRaw[0]?.created_at || "暂无";
+  }
+  if (heroIngestionTime) {
+    heroIngestionTime.textContent = state.ingestionRaw[0]?.created_at || "暂无";
+  }
+  if (heroVectors) {
+    heroVectors.textContent = new Intl.NumberFormat().format(state.vectors);
+  }
 
   renderAppGrid();
   renderTimeline();
@@ -58,6 +79,18 @@ async function loadData() {
     online = true;
   } catch (err) {
     online = false;
+    if (state.apiBase) {
+      try {
+        const res = await fetch("/health");
+        if (res.ok) {
+          setApiBase("");
+          apiBaseInput.value = "";
+          online = true;
+        }
+      } catch (fallbackErr) {
+        online = false;
+      }
+    }
   }
   setStatus(online);
 
@@ -253,7 +286,7 @@ apiBaseInput.addEventListener("change", (event) => {
 });
 refreshBtn.addEventListener("click", () => loadData());
 appsRefresh.addEventListener("click", () => loadData());
-heroIngestion.addEventListener("click", () => scrollToSection("ingestion"));
+heroIngestion.addEventListener("click", () => scrollToSection("activity"));
 heroStores.addEventListener("click", () => {
   window.location.href = "./stores.html";
 });

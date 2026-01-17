@@ -1,6 +1,6 @@
 # api/main.py
 
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -13,6 +13,8 @@ from api.routers.memory import router as memory_router
 from api.routers.kb import router as kb_router
 from api.routers.stores import router as stores_router
 from api.routers.ingestion import router as ingestion_router
+from api.routers.resume import router as resume_router
+from api.routers.jd import router as jd_router
 
 
 def create_app() -> FastAPI:
@@ -31,13 +33,23 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    app.include_router(health_router)
-    app.include_router(query_router)
-    app.include_router(app_register_router)
-    app.include_router(memory_router)
-    app.include_router(kb_router)
-    app.include_router(stores_router)
-    app.include_router(ingestion_router)
+    # Common APIs (platform capabilities)
+    common_router = APIRouter()
+    common_router.include_router(health_router)
+    common_router.include_router(app_register_router)
+    common_router.include_router(kb_router)
+    common_router.include_router(stores_router)
+    common_router.include_router(ingestion_router)
+    common_router.include_router(memory_router)
+
+    # Business APIs (workflow-specific)
+    biz_router = APIRouter()
+    biz_router.include_router(query_router)
+    biz_router.include_router(resume_router)
+    biz_router.include_router(jd_router)
+
+    app.include_router(common_router)
+    app.include_router(biz_router)
 
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
     if frontend_dir.exists():

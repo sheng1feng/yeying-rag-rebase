@@ -114,6 +114,30 @@ class MemoryContextsStore:
             (memory_key, limit, offset),
         )
 
+    def count_by_memory(
+        self,
+        memory_key: str,
+        *,
+        is_summarized: Optional[int] = None,
+    ) -> int:
+        if is_summarized in (0, 1):
+            row = self.conn.query_one(
+                """
+                SELECT COUNT(*) AS total FROM memory_contexts
+                 WHERE memory_key = ? AND is_summarized = ?
+                """,
+                (memory_key, is_summarized),
+            )
+        else:
+            row = self.conn.query_one(
+                """
+                SELECT COUNT(*) AS total FROM memory_contexts
+                 WHERE memory_key = ?
+                """,
+                (memory_key,),
+            )
+        return int(row["total"] if row else 0)
+
     def list_all_unsummarized(self, memory_key):
         return self.conn.query_all(
             """
@@ -170,3 +194,32 @@ class MemoryContextsStore:
             """,
             (desc, uid),
         )
+
+    def update_fields(
+        self,
+        uid: str,
+        *,
+        description: Optional[str] = None,
+        role: Optional[str] = None,
+    ) -> Optional[Row]:
+        updates = []
+        params: list[Any] = []
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if role is not None:
+            updates.append("role = ?")
+            params.append(role)
+        if not updates:
+            return self.get(uid)
+        params.append(uid)
+        self.conn.execute(
+            f"""
+            UPDATE memory_contexts SET
+              {', '.join(updates)},
+              updated_at = datetime('now')
+             WHERE uid = ?
+            """,
+            tuple(params),
+        )
+        return self.get(uid)

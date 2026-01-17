@@ -88,3 +88,32 @@ export function pushMemory(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function fetchMemorySessions(options = {}) {
+  const { limit = 20, offset = 0, appId, walletId, sessionId } = options;
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (appId) params.set("app_id", appId);
+  if (walletId) params.set("wallet_id", walletId);
+  if (sessionId) params.set("session_id", sessionId);
+  return request(`/memory/sessions?${params.toString()}`);
+}
+
+export function fetchMemoryContexts(memoryKey, options = {}) {
+  const { limit = 20, offset = 0, includeContent = false } = options;
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (includeContent) params.set("include_content", "1");
+  return request(`/memory/${memoryKey}/contexts?${params.toString()}`);
+}
+
+export function updateMemoryContext(uid, payload) {
+  return request(`/memory/contexts/${uid}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}

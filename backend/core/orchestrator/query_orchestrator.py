@@ -191,6 +191,10 @@ class QueryOrchestrator:
         aux_blocks.sort(key=lambda x: x["score"], reverse=True)
 
         # 5) KB 检索（中台化：kb_cfg 来自插件 config.yaml）
+        kb_exclude = set(intent_params.get("_kb_exclude") or [])
+        if kb_exclude:
+            kb_cfg = {k: v for k, v in kb_cfg.items() if k not in kb_exclude}
+
         kb_hits = self.kb_manager.search(
             identity=identity,
             query=user_query,

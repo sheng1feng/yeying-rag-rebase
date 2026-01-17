@@ -10,7 +10,9 @@ import {
   updateKBDocument,
   deleteKBDocument,
   fetchIngestionLogs,
-  pushMemory,
+  fetchMemorySessions,
+  fetchMemoryContexts,
+  updateMemoryContext,
 } from "./api.js";
 
 const apiBaseInput = document.getElementById("api-base");
@@ -39,6 +41,11 @@ const kbFilterToggle = document.getElementById("kb-filter-toggle");
 const kbFilterPanel = document.getElementById("kb-filter-panel");
 const schemaToggle = document.getElementById("kb-schema-toggle");
 const schemaPanel = document.getElementById("kb-schema-panel");
+const kbViewTabs = document.getElementById("kb-view-tabs");
+const kbTabButtons = kbViewTabs ? Array.from(kbViewTabs.querySelectorAll(".tab-button")) : [];
+const kbTabPanels = kbViewTabs
+  ? Array.from((kbViewTabs.closest(".panel") || document).querySelectorAll(".tab-panel[data-tab-panel]"))
+  : [];
 
 const detailTitle = document.getElementById("kb-detail-title");
 const detailSubtitle = document.getElementById("kb-detail-subtitle");
@@ -62,6 +69,17 @@ const docTable = document.getElementById("doc-table");
 const docPanel = document.getElementById("doc-panel");
 const docPanelBody = document.getElementById("doc-panel-body");
 const docToggle = document.getElementById("doc-toggle");
+const docColumnsToggle = document.getElementById("doc-columns-toggle");
+const docColumnsPanel = document.getElementById("doc-columns-panel");
+const docExport = document.getElementById("doc-export");
+const docPageSize = document.getElementById("doc-page-size");
+const docPageInfo = document.getElementById("doc-page-info");
+const docPrev = document.getElementById("doc-prev");
+const docNext = document.getElementById("doc-next");
+const docExportHint = document.getElementById("doc-export-hint");
+const docSelectedCount = document.getElementById("doc-selected-count");
+const docBulkExport = document.getElementById("doc-bulk-export");
+const docBulkDelete = document.getElementById("doc-bulk-delete");
 const docForm = document.getElementById("doc-form");
 const docIdInput = document.getElementById("doc-id");
 const docTextInput = document.getElementById("doc-text");
@@ -80,15 +98,25 @@ const drawerDocCreated = document.getElementById("drawer-doc-created");
 const drawerDocFields = document.getElementById("drawer-doc-fields");
 const drawerDocMeta = document.getElementById("drawer-doc-meta");
 
-const memoryForm = document.getElementById("memory-form");
-const memoryAppId = document.getElementById("memory-app-id");
-const memoryWalletId = document.getElementById("memory-wallet-id");
-const memorySessionId = document.getElementById("memory-session-id");
-const memoryFilename = document.getElementById("memory-filename");
-const memoryDescription = document.getElementById("memory-description");
-const memoryThreshold = document.getElementById("memory-threshold");
-const memoryHint = document.getElementById("memory-hint");
-const memoryLog = document.getElementById("memory-log");
+const memoryWalletFilter = document.getElementById("memory-wallet-filter");
+const memorySessionFilter = document.getElementById("memory-session-filter");
+const memoryRefresh = document.getElementById("memory-refresh");
+const memorySessionTable = document.getElementById("memory-session-table");
+const memoryDetailTitle = document.getElementById("memory-detail-title");
+const memoryDetailSubtitle = document.getElementById("memory-detail-subtitle");
+const memoryDetailKey = document.getElementById("memory-detail-key");
+const memoryDetailCount = document.getElementById("memory-detail-count");
+const memoryDetailWallet = document.getElementById("memory-detail-wallet");
+const memoryDetailSession = document.getElementById("memory-detail-session");
+const memoryContextTable = document.getElementById("memory-context-table");
+const memoryContextRefresh = document.getElementById("memory-context-refresh");
+const memoryContextForm = document.getElementById("memory-context-form");
+const memoryContextRole = document.getElementById("memory-context-role");
+const memoryContextDesc = document.getElementById("memory-context-desc");
+const memoryContextSave = document.getElementById("memory-context-save");
+const memoryContextReset = document.getElementById("memory-context-reset");
+const memoryContextHint = document.getElementById("memory-context-hint");
+const memoryContextText = document.getElementById("memory-context-text");
 
 const timeline = document.getElementById("ingestion-timeline");
 const ingestionExport = document.getElementById("ingestion-export");
@@ -153,10 +181,6 @@ function applyData(data) {
   if (!state.selectedKb && state.knowledgeBases.length) {
     selectKb(state.knowledgeBases[0].id);
   }
-
-  if (appInfo) {
-    memoryAppId.value = appInfo.app_id;
-  }
 }
 
 async function loadData() {
@@ -166,6 +190,18 @@ async function loadData() {
     online = true;
   } catch (err) {
     online = false;
+    if (state.apiBase) {
+      try {
+        const res = await fetch("/health");
+        if (res.ok) {
+          setApiBase("");
+          apiBaseInput.value = "";
+          online = true;
+        }
+      } catch (fallbackErr) {
+        online = false;
+      }
+    }
   }
   setStatus(online);
 
@@ -184,6 +220,16 @@ async function loadData() {
       ingestionRaw: mockData.ingestion,
       vectors: totalVectors,
     });
+    state.memorySessions = [];
+    state.memorySessionTotal = 0;
+    state.memoryContexts = [];
+    state.memoryContextTotal = 0;
+    state.selectedMemoryKey = null;
+    state.selectedMemoryContextId = null;
+    renderMemorySessionTable();
+    renderMemoryContextTable();
+    updateMemoryDetail(null);
+    resetMemoryContextForm(null);
     return;
   }
 
@@ -258,8 +304,19 @@ async function loadData() {
       ingestion: mapIngestion(ingestionLogs) || [],
       ingestionRaw,
     });
+    await loadMemorySessions();
   } catch (err) {
     applyData({ apps: [], appInfo: null, knowledgeBases: [], ingestion: [], ingestionRaw: [], vectors: 0 });
+    state.memorySessions = [];
+    state.memorySessionTotal = 0;
+    state.memoryContexts = [];
+    state.memoryContextTotal = 0;
+    state.selectedMemoryKey = null;
+    state.selectedMemoryContextId = null;
+    renderMemorySessionTable();
+    renderMemoryContextTable();
+    updateMemoryDetail(null);
+    resetMemoryContextForm(null);
   }
 }
 
@@ -281,6 +338,14 @@ function renderKbTable() {
       const accessMatch = !filters.access.length || filters.access.includes(kb.access);
       return ownerMatch && typeMatch && accessMatch;
     });
+
+  if (!rows.length) {
+    kbTable.innerHTML = renderEmptyState(
+      "暂无知识库",
+      "当前应用还没有可用的知识库，请先完成应用注册与数据摄取。"
+    );
+    return;
+  }
 
   const header = `
     <div class="table-row header">
@@ -380,8 +445,18 @@ async function selectKb(id) {
   const kb = state.knowledgeBases.find((item) => item.id === id);
   if (!kb) return;
   state.selectedKb = id;
+  state.docPageOffset = 0;
+  state.docVisibleColumns = loadDocColumnPreferences(kb);
+  state.docSort = null;
+  state.selectedDocIds = new Set();
   closeDocDrawer();
   resetDocForm({ render: false });
+  if (docColumnsPanel) {
+    docColumnsPanel.classList.add("hidden");
+  }
+  if (docColumnsToggle) {
+    docColumnsToggle.textContent = "字段";
+  }
   renderKbTable();
   if (schemaPanel) {
     schemaPanel.classList.add("hidden");
@@ -411,18 +486,36 @@ async function loadDocuments() {
     state.documents = [];
     state.docTotal = 0;
     state.docColumns = [];
+    state.docVisibleColumns = [];
+    state.selectedDocIds = new Set();
+    state.docSort = null;
     renderDocTable();
+    renderDocColumnsPanel();
+    renderDocToolbar();
     resetDocForm({ render: false });
     updateDocDrawerMeta(null);
     return;
   }
 
+  if (docExportHint) {
+    docExportHint.textContent = "";
+  }
   docSubtitle.textContent = `集合 ${kb.collection} · 文本字段 ${kb.text_field} · 点击行查看详情`;
   try {
-    const res = await fetchKBDocuments(kb.app_id, kb.kb_key, 20, 0);
+    const res = await fetchKBDocuments(kb.app_id, kb.kb_key, state.docPageSize, state.docPageOffset);
     state.documents = res.items || [];
     state.docTotal = res.total ?? 0;
+    const pageCount = state.docTotal ? Math.ceil(state.docTotal / state.docPageSize) : 0;
+    const maxOffset = pageCount ? (pageCount - 1) * state.docPageSize : 0;
+    if (state.docPageOffset > maxOffset) {
+      state.docPageOffset = maxOffset;
+      await loadDocuments();
+      return;
+    }
     state.docColumns = buildDocColumns(state.documents, kb.text_field);
+    state.docVisibleColumns = normalizeVisibleColumns(state.docVisibleColumns, kb.text_field);
+    ensureSelectedDocIds();
+    pruneDocSelection(state.documents);
     const labelColumns = state.docColumns.length ? state.docColumns : ["id", kb.text_field || "text"];
     const columnsLabel =
       labelColumns.length > 6
@@ -430,47 +523,118 @@ async function loadDocuments() {
         : labelColumns.join(", ");
     docSubtitle.textContent = `集合 ${kb.collection} · 文本字段 ${kb.text_field} · 总数 ${state.docTotal} · 列: ${columnsLabel} · 点击行查看详情`;
     renderDocTable();
+    renderDocColumnsPanel();
+    renderDocToolbar();
     syncDocSelection();
   } catch (err) {
     docHint.textContent = `加载失败: ${err.message}`;
     state.documents = [];
     state.docTotal = 0;
     state.docColumns = [];
+    state.docVisibleColumns = [];
+    state.selectedDocIds = new Set();
+    state.docSort = null;
     renderDocTable();
+    renderDocColumnsPanel();
+    renderDocToolbar();
     resetDocForm({ render: false });
     updateDocDrawerMeta(null);
   }
 }
 
-function renderDocTable() {
+function getFilteredDocs() {
   const query = (docSearch.value || "").toLowerCase();
   const rows = state.documents.filter((doc) => {
     if (!query) return true;
     const text = JSON.stringify(doc.properties || {}).toLowerCase();
     return doc.id.toLowerCase().includes(query) || text.includes(query);
   });
+  const kb = getSelectedKb();
+  const textField = kb?.text_field || "text";
+  return sortDocuments(rows, textField);
+}
+
+function sortDocuments(rows, textField) {
+  if (!state.docSort || !state.docSort.key) return rows;
+  const { key, direction } = state.docSort;
+  const dir = direction === "desc" ? -1 : 1;
+  return rows.sort((a, b) => {
+    const left = normalizeSortValue(getDocSortValue(a, key, textField));
+    const right = normalizeSortValue(getDocSortValue(b, key, textField));
+
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+
+    if (typeof left === "number" && typeof right === "number") {
+      return (left - right) * dir;
+    }
+    return String(left).localeCompare(String(right)) * dir;
+  });
+}
+
+function getDocSortValue(doc, key, textField) {
+  if (key === "id") return doc.id;
+  if (key === textField) return getDocText(doc);
+  return doc.properties ? doc.properties[key] : undefined;
+}
+
+function normalizeSortValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return value;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") return value.toLowerCase();
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return String(value);
+  }
+}
+
+function toggleDocSort(key) {
+  if (!key) return;
+  if (state.docSort && state.docSort.key === key) {
+    state.docSort.direction = state.docSort.direction === "asc" ? "desc" : "asc";
+  } else {
+    state.docSort = { key, direction: "asc" };
+  }
+  renderDocTable();
+}
+
+function renderDocTable() {
+  const rows = getFilteredDocs();
 
   const kb = getSelectedKb();
   const textField = kb?.text_field || "text";
-  const columns = state.docColumns.length ? state.docColumns : ["id", textField];
-  const columnTemplate = buildDocGridTemplate(columns.length);
+  const columns = getVisibleDocColumns(textField);
+  const columnTemplate = buildDocGridTemplate(columns.length, true);
+  ensureSelectedDocIds();
+  pruneDocSelection(rows);
 
+  if (!rows.length) {
+    docTable.innerHTML = renderEmptyState("暂无文档", "当前集合没有可展示的数据，请先写入或导入内容。");
+    updateDocSelectionSummary(rows);
+    return;
+  }
+
+  const fieldTypes = collectDocFieldTypes(rows, textField);
   const header = `
     <div class="table-row header" style="--doc-columns: ${columnTemplate}">
-      ${columns
-        .map((col) => (col === "id" ? "<div>ID</div>" : `<div>${escapeHtml(col)}</div>`))
-        .join("")}
+      ${renderDocSelectHeaderCell(rows)}
+      ${columns.map((col) => renderDocHeaderCell(col, fieldTypes, textField)).join("")}
     </div>
   `;
 
   const body = rows
     .map((doc) => {
       const active = state.selectedDocId === doc.id ? "active" : "";
+      const checked = state.selectedDocIds.has(doc.id) ? "checked" : "";
+      const safeDocId = escapeHtml(doc.id);
+      const selectCell = `<div class="doc-select"><input type="checkbox" data-doc-select="${safeDocId}" ${checked} /></div>`;
       const cells = columns
         .map((col) => {
           if (col === "id") {
-            const safeId = escapeHtml(doc.id);
-            return `<div class="cell-id" title="${safeId}">${safeId}</div>`;
+            return `<div class="cell-id" title="${safeDocId}">${safeDocId}</div>`;
           }
           const value = doc.properties ? doc.properties[col] : undefined;
           return `<div>${renderCell(value)}</div>`;
@@ -478,6 +642,7 @@ function renderDocTable() {
         .join("");
       return `
         <div class="table-row ${active}" data-doc="${doc.id}" style="--doc-columns: ${columnTemplate}">
+          ${selectCell}
           ${cells}
         </div>
       `;
@@ -486,9 +651,410 @@ function renderDocTable() {
 
   docTable.innerHTML = header + body;
 
-  docTable.querySelectorAll(".table-row[data-doc]").forEach((row) => {
-    row.addEventListener("click", () => selectDoc(row.dataset.doc));
+  const selectAll = docTable.querySelector("#doc-select-all");
+  if (selectAll) {
+    const selectedCount = rows.filter((doc) => state.selectedDocIds.has(doc.id)).length;
+    const allSelected = rows.length > 0 && selectedCount === rows.length;
+    const anySelected = selectedCount > 0 && !allSelected;
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = anySelected;
+    selectAll.disabled = rows.length === 0;
+    selectAll.addEventListener("change", () => toggleSelectAllRows(rows, selectAll.checked));
+  }
+
+  docTable.querySelectorAll("input[data-doc-select]").forEach((input) => {
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("change", (event) => {
+      toggleDocSelection(event.target.dataset.docSelect, event.target.checked);
+    });
   });
+
+  docTable.querySelectorAll(".header-button[data-sort]").forEach((button) => {
+    button.addEventListener("click", () => toggleDocSort(button.dataset.sort));
+  });
+
+  docTable.querySelectorAll(".table-row[data-doc]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("input")) return;
+      selectDoc(row.dataset.doc);
+    });
+  });
+
+  updateDocSelectionSummary(rows);
+}
+
+function ensureSelectedDocIds() {
+  if (!(state.selectedDocIds instanceof Set)) {
+    state.selectedDocIds = new Set(state.selectedDocIds || []);
+  }
+}
+
+function pruneDocSelection(rows) {
+  ensureSelectedDocIds();
+  const allowed = new Set(rows.map((doc) => doc.id));
+  Array.from(state.selectedDocIds).forEach((docId) => {
+    if (!allowed.has(docId)) {
+      state.selectedDocIds.delete(docId);
+    }
+  });
+}
+
+function updateDocSelectionSummary(rows) {
+  ensureSelectedDocIds();
+  const selectedCount = state.selectedDocIds.size;
+  if (docSelectedCount) {
+    docSelectedCount.textContent = String(selectedCount);
+  }
+  if (docBulkExport) {
+    docBulkExport.disabled = selectedCount === 0;
+  }
+  if (docBulkDelete) {
+    docBulkDelete.disabled = selectedCount === 0;
+  }
+  const selectAll = docTable ? docTable.querySelector("#doc-select-all") : null;
+  if (selectAll) {
+    const visibleCount = rows.length;
+    const selectedVisible = rows.filter((doc) => state.selectedDocIds.has(doc.id)).length;
+    const allSelected = visibleCount > 0 && selectedVisible === visibleCount;
+    const anySelected = selectedVisible > 0 && !allSelected;
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = anySelected;
+    selectAll.disabled = visibleCount === 0;
+  }
+  if (docExportHint && rows.length === 0) {
+    docExportHint.textContent = "";
+  }
+}
+
+function toggleDocSelection(docId, checked) {
+  ensureSelectedDocIds();
+  if (checked) {
+    state.selectedDocIds.add(docId);
+  } else {
+    state.selectedDocIds.delete(docId);
+  }
+  updateDocSelectionSummary(getFilteredDocs());
+}
+
+function toggleSelectAllRows(rows, checked) {
+  ensureSelectedDocIds();
+  rows.forEach((doc) => {
+    if (checked) {
+      state.selectedDocIds.add(doc.id);
+    } else {
+      state.selectedDocIds.delete(doc.id);
+    }
+  });
+  renderDocTable();
+}
+
+function collectDocFieldTypes(rows, textField) {
+  const map = new Map();
+  rows.forEach((doc) => {
+    addFieldType(map, "id", doc.id);
+    const props = doc.properties || {};
+    Object.entries(props).forEach(([key, value]) => {
+      addFieldType(map, key, value);
+    });
+    if (textField && props[textField] === undefined) {
+      addFieldType(map, textField, getDocText(doc));
+    }
+  });
+  return map;
+}
+
+function addFieldType(map, key, value) {
+  const entry = map.get(key) || new Set();
+  entry.add(normalizeSchemaType(value));
+  map.set(key, entry);
+}
+
+function formatTypeHint(types) {
+  if (!types.length) {
+    return { label: "-", title: "未知" };
+  }
+  if (types.length === 1) {
+    return { label: types[0], title: types[0] };
+  }
+  return { label: "混合", title: types.join(" / ") };
+}
+
+function renderDocSelectHeaderCell(rows) {
+  const disabled = rows.length === 0 ? "disabled" : "";
+  return `<div class="doc-select"><input type="checkbox" id="doc-select-all" ${disabled} /></div>`;
+}
+
+function renderDocHeaderCell(col, fieldTypes) {
+  const types = fieldTypes.get(col) ? Array.from(fieldTypes.get(col)) : [];
+  const hint = formatTypeHint(types);
+  const isSorted = state.docSort && state.docSort.key === col;
+  const direction = isSorted ? state.docSort.direction : "";
+  const indicator = direction ? `<span class="sort-indicator">${direction.toUpperCase()}</span>` : "";
+  const label = col === "id" ? "ID" : escapeHtml(col);
+  return `
+    <div class="header-cell">
+      <button class="header-button ${isSorted ? "active" : ""}" data-sort="${escapeHtml(col)}">
+        <span>${label}</span>
+        ${indicator}
+      </button>
+      <span class="type-pill" title="${escapeHtml(hint.title)}">${escapeHtml(hint.label)}</span>
+    </div>
+  `;
+}
+
+function renderEmptyState(title, subtitle) {
+  return `
+    <div class="empty-state">
+      <div class="empty-illustration" aria-hidden="true">
+        <svg viewBox="0 0 120 90" role="img" aria-hidden="true">
+          <defs>
+            <linearGradient id="emptyFill" x1="0" x2="1" y1="0" y2="1">
+              <stop offset="0%" stop-color="#2b6ff7" stop-opacity="0.2" />
+              <stop offset="100%" stop-color="#5bb3ff" stop-opacity="0.4" />
+            </linearGradient>
+          </defs>
+          <rect x="18" y="18" width="84" height="54" rx="10" fill="url(#emptyFill)" />
+          <rect x="28" y="30" width="64" height="6" rx="3" fill="#2b6ff7" opacity="0.6" />
+          <rect x="28" y="42" width="44" height="6" rx="3" fill="#2b6ff7" opacity="0.4" />
+          <rect x="28" y="54" width="54" height="6" rx="3" fill="#2b6ff7" opacity="0.3" />
+        </svg>
+      </div>
+      <div class="empty-title">${escapeHtml(title)}</div>
+      <div class="empty-subtitle">${escapeHtml(subtitle)}</div>
+    </div>
+  `;
+}
+
+function getAvailableDocColumns(textField) {
+  const fallback = ["id", textField || "text"];
+  return state.docColumns.length ? state.docColumns : fallback;
+}
+
+function getDocColumnStorageKey(kb) {
+  if (!kb) return "rag_doc_columns:unknown";
+  return `rag_doc_columns:${kb.app_id}:${kb.kb_key}`;
+}
+
+function loadDocColumnPreferences(kb) {
+  if (!kb) return [];
+  try {
+    const raw = localStorage.getItem(getDocColumnStorageKey(kb));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveDocColumnPreferences(kb, columns) {
+  if (!kb) return;
+  try {
+    localStorage.setItem(getDocColumnStorageKey(kb), JSON.stringify(columns));
+  } catch (err) {
+    // Ignore storage errors to avoid breaking the UI.
+  }
+}
+
+function normalizeVisibleColumns(columns, textField) {
+  const available = getAvailableDocColumns(textField);
+  const base = ["id", textField || "text"];
+  const filtered = (columns || []).filter((col) => available.includes(col));
+  const merged = [...base, ...filtered].filter((col, index, arr) => arr.indexOf(col) === index);
+  return merged.length ? merged : available;
+}
+
+function getVisibleDocColumns(textField) {
+  state.docVisibleColumns = normalizeVisibleColumns(state.docVisibleColumns, textField);
+  return state.docVisibleColumns.length ? state.docVisibleColumns : getAvailableDocColumns(textField);
+}
+
+function renderDocColumnsPanel() {
+  if (!docColumnsPanel) return;
+  const kb = getSelectedKb();
+  const textField = kb?.text_field || "text";
+  const columns = getAvailableDocColumns(textField);
+
+  if (!columns.length) {
+    docColumnsPanel.innerHTML = "<div class=\"detail-label\">暂无字段信息。</div>";
+    return;
+  }
+
+  const visible = new Set(getVisibleDocColumns(textField));
+  const base = new Set(["id", textField || "text"]);
+
+  const chips = columns
+    .map((col) => {
+      const safeCol = escapeHtml(col);
+      const checked = visible.has(col) ? "checked" : "";
+      const disabled = base.has(col) ? "disabled" : "";
+      return `<label class="filter-chip"><input type="checkbox" data-col="${safeCol}" ${checked} ${disabled} />${safeCol}</label>`;
+    })
+    .join("");
+
+  docColumnsPanel.innerHTML = `
+    <div class="filter-group">
+      <span>列</span>
+      ${chips}
+    </div>
+    <div class="filter-group">
+      <button class="ghost" id="doc-columns-reset">恢复默认</button>
+    </div>
+  `;
+
+  docColumnsPanel.querySelectorAll("input[data-col]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const selected = [];
+      docColumnsPanel.querySelectorAll("input[data-col]:checked").forEach((checked) => {
+        selected.push(checked.dataset.col);
+      });
+      state.docVisibleColumns = normalizeVisibleColumns(selected, textField);
+      saveDocColumnPreferences(kb, state.docVisibleColumns);
+      renderDocTable();
+    });
+  });
+
+  const resetBtn = docColumnsPanel.querySelector("#doc-columns-reset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      state.docVisibleColumns = normalizeVisibleColumns([], textField);
+      saveDocColumnPreferences(kb, state.docVisibleColumns);
+      renderDocColumnsPanel();
+      renderDocTable();
+    });
+  }
+}
+
+function renderDocToolbar() {
+  if (!docPageInfo || !docPrev || !docNext) return;
+  const total = state.docTotal || 0;
+  const size = state.docPageSize || 20;
+  const offset = state.docPageOffset || 0;
+  const pageCount = total ? Math.ceil(total / size) : 0;
+  const current = total ? Math.floor(offset / size) + 1 : 0;
+
+  docPageInfo.textContent = total ? `第 ${current}/${pageCount} 页 · ${total} 条` : "暂无数据";
+  docPrev.disabled = offset <= 0;
+  docNext.disabled = offset + size >= total;
+}
+
+function updateDocPageSize(size) {
+  state.docPageSize = size;
+  state.docPageOffset = 0;
+  loadDocuments();
+}
+
+function updateDocPageOffset(offset) {
+  state.docPageOffset = Math.max(0, offset);
+  loadDocuments();
+}
+
+function toggleDocColumnsPanel() {
+  if (!docColumnsPanel || !docColumnsToggle) return;
+  const isHidden = docColumnsPanel.classList.contains("hidden");
+  docColumnsPanel.classList.toggle("hidden");
+  docColumnsToggle.textContent = isHidden ? "收起字段" : "字段";
+}
+
+function exportDocuments() {
+  const rows = getFilteredDocs();
+  if (!rows.length) {
+    if (docExportHint) {
+      docExportHint.textContent = "没有可导出的文档。";
+    }
+    return;
+  }
+  if (docExportHint) {
+    docExportHint.textContent = "";
+  }
+  const blob = new Blob([JSON.stringify(rows, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `documents-${Date.now()}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  if (docExportHint) {
+    docExportHint.textContent = `已导出 ${rows.length} 条文档。`;
+  }
+}
+
+function getSelectedDocs() {
+  ensureSelectedDocIds();
+  return getFilteredDocs().filter((doc) => state.selectedDocIds.has(doc.id));
+}
+
+function exportSelectedDocuments() {
+  const rows = getSelectedDocs();
+  if (!rows.length) {
+    if (docExportHint) {
+      docExportHint.textContent = "请先选择要导出的文档。";
+    }
+    return;
+  }
+  if (docExportHint) {
+    docExportHint.textContent = "";
+  }
+  const blob = new Blob([JSON.stringify(rows, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `documents-selected-${Date.now()}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  if (docExportHint) {
+    docExportHint.textContent = `已导出 ${rows.length} 条已选文档。`;
+  }
+}
+
+async function deleteSelectedDocuments() {
+  const kb = getSelectedKb();
+  if (!kb) {
+    if (docExportHint) {
+      docExportHint.textContent = "请先选择知识库。";
+    }
+    return;
+  }
+  const rows = getSelectedDocs();
+  if (!rows.length) {
+    if (docExportHint) {
+      docExportHint.textContent = "请先选择要删除的文档。";
+    }
+    return;
+  }
+  const confirmed = window.confirm(`确认删除 ${rows.length} 条文档？此操作不可撤销。`);
+  if (!confirmed) return;
+
+  if (docExportHint) {
+    docExportHint.textContent = `正在删除 ${rows.length} 条文档...`;
+  }
+  try {
+    for (const doc of rows) {
+      await deleteKBDocument(kb.app_id, kb.kb_key, doc.id);
+    }
+    state.selectedDocIds = new Set();
+    if (state.selectedDocId) {
+      state.selectedDocId = null;
+      resetDocForm({ render: false });
+      updateDocDrawerMeta(null);
+    }
+    await loadDocuments();
+    if (docExportHint) {
+      docExportHint.textContent = `已删除 ${rows.length} 条文档。`;
+    }
+  } catch (err) {
+    if (docExportHint) {
+      docExportHint.textContent = `批量删除失败: ${err.message}`;
+    }
+  }
 }
 
 function setDocPanelCollapsed(collapsed) {
@@ -632,11 +1198,16 @@ function buildDocColumns(docs, textField) {
   return ["id", textField || "text", ...extraKeys];
 }
 
-function buildDocGridTemplate(count) {
-  if (count <= 2) {
-    return "1.2fr 2.6fr";
+function buildDocGridTemplate(count, includeSelect = false) {
+  const columns = [];
+  if (includeSelect) {
+    columns.push("44px");
   }
-  const columns = ["1.2fr", "2.6fr"];
+  if (count <= 2) {
+    columns.push("1.2fr", "2.6fr");
+    return columns.join(" ");
+  }
+  columns.push("1.2fr", "2.6fr");
   for (let i = 2; i < count; i += 1) {
     columns.push("1fr");
   }
@@ -843,6 +1414,8 @@ async function handleDocDelete() {
   try {
     await deleteKBDocument(kb.app_id, kb.kb_key, state.selectedDocId);
     docHint.textContent = "文档已删除。";
+    ensureSelectedDocIds();
+    state.selectedDocIds.delete(state.selectedDocId);
     resetDocForm();
     updateDocDrawerMeta(null);
     await loadDocuments();
@@ -851,43 +1424,276 @@ async function handleDocDelete() {
   }
 }
 
-async function handleMemorySubmit(event) {
-  event.preventDefault();
-  const appId = memoryAppId.value.trim();
-  const walletId = memoryWalletId.value.trim();
-  const sessionId = memorySessionId.value.trim();
-  const filename = memoryFilename.value.trim();
-  const description = memoryDescription.value.trim();
-  const thresholdRaw = memoryThreshold.value.trim();
-
-  if (!appId || !walletId || !sessionId || !filename) {
-    memoryHint.textContent = "应用 ID、钱包 ID、会话 ID 与文件路径为必填。";
+function renderMemorySessionTable() {
+  if (!memorySessionTable) return;
+  const rows = state.memorySessions || [];
+  if (!rows.length) {
+    memorySessionTable.innerHTML = renderEmptyState("暂无记忆会话", "请先产生会话或检查筛选条件。");
     return;
   }
+  const header = `
+    <div class="table-row header">
+      <div>钱包</div>
+      <div>会话</div>
+      <div>消息数</div>
+      <div>最近更新</div>
+    </div>
+  `;
+  const body = rows
+    .map((row) => {
+      const active = state.selectedMemoryKey === row.memory_key ? "active" : "";
+      return `
+        <div class="table-row ${active}" data-memory-key="${row.memory_key}">
+          <div>${escapeHtml(row.wallet_id || "-")}</div>
+          <div>${escapeHtml(row.session_id || "-")}</div>
+          <div>${row.message_count ?? 0}</div>
+          <div>${row.last_message_at || row.updated_at || "-"}</div>
+        </div>
+      `;
+    })
+    .join("");
+  memorySessionTable.innerHTML = header + body;
+  memorySessionTable.querySelectorAll(".table-row[data-memory-key]").forEach((row) => {
+    row.addEventListener("click", () => selectMemorySession(row.dataset.memoryKey));
+  });
+}
 
-  const payload = {
-    app_id: appId,
-    wallet_id: walletId,
-    session_id: sessionId,
-    filename,
-    description: description || null,
-  };
-
-  if (thresholdRaw) {
-    const parsed = Number.parseInt(thresholdRaw, 10);
-    if (Number.isNaN(parsed)) {
-      memoryHint.textContent = "摘要阈值必须是数字。";
-      return;
-    }
-    payload.summary_threshold = parsed;
+function renderMemoryContextTable() {
+  if (!memoryContextTable) return;
+  const rows = state.memoryContexts || [];
+  if (!rows.length) {
+    memoryContextTable.innerHTML = renderEmptyState("暂无记忆条目", "当前会话没有可展示的记忆上下文。");
+    return;
   }
+  const header = `
+    <div class="table-row header">
+      <div>角色</div>
+      <div>描述</div>
+      <div>状态</div>
+      <div>创建时间</div>
+    </div>
+  `;
+  const body = rows
+    .map((row) => {
+      const active = state.selectedMemoryContextId === row.uid ? "active" : "";
+      const status = row.is_summarized ? "已总结" : "未总结";
+      return `
+        <div class="table-row ${active}" data-memory-uid="${row.uid}">
+          <div>${escapeHtml(row.role || "-")}</div>
+          <div>${escapeHtml(row.description || "-")}</div>
+          <div>${status}</div>
+          <div>${row.created_at || "-"}</div>
+        </div>
+      `;
+    })
+    .join("");
+  memoryContextTable.innerHTML = header + body;
+  memoryContextTable.querySelectorAll(".table-row[data-memory-uid]").forEach((row) => {
+    row.addEventListener("click", () => selectMemoryContext(row.dataset.memoryUid));
+  });
+}
 
+function updateMemoryDetail(session) {
+  if (!memoryDetailTitle || !memoryDetailSubtitle) return;
+  if (!session) {
+    memoryDetailTitle.textContent = "记忆详情";
+    memoryDetailSubtitle.textContent = "选择会话查看记忆内容。";
+    if (memoryDetailKey) memoryDetailKey.textContent = "-";
+    if (memoryDetailCount) memoryDetailCount.textContent = "-";
+    if (memoryDetailWallet) memoryDetailWallet.textContent = "-";
+    if (memoryDetailSession) memoryDetailSession.textContent = "-";
+    return;
+  }
+  memoryDetailTitle.textContent = "记忆详情";
+  memoryDetailSubtitle.textContent = `钱包 ${session.wallet_id || "-"} · 会话 ${session.session_id || "-"}`;
+  if (memoryDetailKey) memoryDetailKey.textContent = session.memory_key || "-";
+  if (memoryDetailCount) memoryDetailCount.textContent = session.message_count ?? 0;
+  if (memoryDetailWallet) memoryDetailWallet.textContent = session.wallet_id || "-";
+  if (memoryDetailSession) memoryDetailSession.textContent = session.session_id || "-";
+}
+
+function resetMemoryContextForm(context) {
+  if (!memoryContextRole || !memoryContextDesc || !memoryContextHint) return;
+  if (!context) {
+    memoryContextRole.value = "user";
+    memoryContextDesc.value = "";
+    memoryContextHint.textContent = "请先选择记忆条目。";
+    if (memoryContextRole) memoryContextRole.disabled = true;
+    if (memoryContextDesc) memoryContextDesc.disabled = true;
+    if (memoryContextSave) memoryContextSave.disabled = true;
+    if (memoryContextReset) memoryContextReset.disabled = true;
+    if (memoryContextText) {
+      memoryContextText.textContent = "选择记忆条目查看内容。";
+    }
+    return;
+  }
+  memoryContextHint.textContent = "";
+  if (memoryContextRole) memoryContextRole.disabled = false;
+  if (memoryContextDesc) memoryContextDesc.disabled = false;
+  if (memoryContextSave) memoryContextSave.disabled = false;
+  if (memoryContextReset) memoryContextReset.disabled = false;
+  ensureRoleOption(context.role);
+  memoryContextRole.value = context.role || "user";
+  memoryContextDesc.value = context.description || "";
+  if (memoryContextText) {
+    memoryContextText.textContent = context.content || "未加载内容。";
+  }
+}
+
+function ensureRoleOption(role) {
+  if (!memoryContextRole || !role) return;
+  const hasOption = Array.from(memoryContextRole.options).some((opt) => opt.value === role);
+  if (!hasOption) {
+    const option = document.createElement("option");
+    option.value = role;
+    option.textContent = role;
+    memoryContextRole.appendChild(option);
+  }
+}
+
+function getSelectedMemorySession() {
+  return (state.memorySessions || []).find((row) => row.memory_key === state.selectedMemoryKey) || null;
+}
+
+function getSelectedMemoryContext() {
+  return (state.memoryContexts || []).find((row) => row.uid === state.selectedMemoryContextId) || null;
+}
+
+function selectMemorySession(memoryKey) {
+  if (!memoryKey) return;
+  state.selectedMemoryKey = memoryKey;
+  state.selectedMemoryContextId = null;
+  state.memoryContextSnapshot = null;
+  updateMemoryDetail(getSelectedMemorySession());
+  renderMemorySessionTable();
+  loadMemoryContexts();
+}
+
+function selectMemoryContext(uid) {
+  state.selectedMemoryContextId = uid;
+  const ctx = getSelectedMemoryContext();
+  state.memoryContextSnapshot = ctx ? { role: ctx.role, description: ctx.description || "" } : null;
+  renderMemoryContextTable();
+  resetMemoryContextForm(ctx);
+}
+
+async function loadMemorySessions() {
+  if (!memorySessionTable) return;
+  const walletId = memoryWalletFilter?.value.trim();
+  const sessionId = memorySessionFilter?.value.trim();
   try {
-    const res = await pushMemory(payload);
-    memoryHint.textContent = "记忆写入完成。";
-    memoryLog.textContent = JSON.stringify(res, null, 2);
+    const res = await fetchMemorySessions({
+      appId: currentAppId || undefined,
+      walletId: walletId || undefined,
+      sessionId: sessionId || undefined,
+      limit: 50,
+      offset: 0,
+    });
+    state.memorySessions = res.items || [];
+    state.memorySessionTotal = res.total ?? (res.items || []).length;
+    if (!state.memorySessions.length) {
+      state.selectedMemoryKey = null;
+      state.selectedMemoryContextId = null;
+    }
+    if (state.selectedMemoryKey) {
+      const exists = state.memorySessions.some((row) => row.memory_key === state.selectedMemoryKey);
+      if (!exists) {
+        state.selectedMemoryKey = state.memorySessions[0]?.memory_key || null;
+      }
+    } else if (state.memorySessions.length) {
+      state.selectedMemoryKey = state.memorySessions[0].memory_key;
+    }
   } catch (err) {
-    memoryHint.textContent = `写入失败: ${err.message}`;
+    state.memorySessions = [];
+    state.memorySessionTotal = 0;
+  }
+  renderMemorySessionTable();
+  updateMemoryDetail(getSelectedMemorySession());
+  await loadMemoryContexts();
+}
+
+async function loadMemoryContexts() {
+  if (!memoryContextTable) return;
+  const memoryKey = state.selectedMemoryKey;
+  if (!memoryKey) {
+    state.memoryContexts = [];
+    state.memoryContextTotal = 0;
+    renderMemoryContextTable();
+    resetMemoryContextForm(null);
+    return;
+  }
+  try {
+    const res = await fetchMemoryContexts(memoryKey, { limit: 50, offset: 0, includeContent: true });
+    state.memoryContexts = res.items || [];
+    state.memoryContextTotal = res.total ?? (res.items || []).length;
+    if (state.selectedMemoryContextId) {
+      const exists = state.memoryContexts.some((row) => row.uid === state.selectedMemoryContextId);
+      if (!exists) {
+        state.selectedMemoryContextId = state.memoryContexts[0]?.uid || null;
+      }
+    } else if (state.memoryContexts.length) {
+      state.selectedMemoryContextId = state.memoryContexts[0].uid;
+    }
+    const ctx = getSelectedMemoryContext();
+    state.memoryContextSnapshot = ctx ? { role: ctx.role, description: ctx.description || "" } : null;
+  } catch (err) {
+    state.memoryContexts = [];
+    state.memoryContextTotal = 0;
+  }
+  renderMemoryContextTable();
+  resetMemoryContextForm(getSelectedMemoryContext());
+}
+
+async function handleMemoryContextSubmit(event) {
+  event.preventDefault();
+  const ctx = getSelectedMemoryContext();
+  if (!ctx) {
+    if (memoryContextHint) {
+      memoryContextHint.textContent = "请先选择记忆条目。";
+    }
+    return;
+  }
+  const nextRole = memoryContextRole?.value.trim() || ctx.role;
+  const nextDesc = memoryContextDesc?.value.trim() || "";
+  const snapshot = state.memoryContextSnapshot || {};
+  if (snapshot.role === nextRole && (snapshot.description || "") === nextDesc) {
+    if (memoryContextHint) {
+      memoryContextHint.textContent = "没有可保存的修改。";
+    }
+    return;
+  }
+  try {
+    const updated = await updateMemoryContext(ctx.uid, {
+      role: nextRole,
+      description: nextDesc || null,
+    });
+    state.memoryContexts = state.memoryContexts.map((row) => (row.uid === ctx.uid ? updated : row));
+    state.memoryContextSnapshot = { role: updated.role, description: updated.description || "" };
+    if (memoryContextHint) {
+      memoryContextHint.textContent = "记忆已更新。";
+    }
+    renderMemoryContextTable();
+    resetMemoryContextForm(updated);
+  } catch (err) {
+    if (memoryContextHint) {
+      memoryContextHint.textContent = `更新失败: ${err.message}`;
+    }
+  }
+}
+
+function resetMemoryContextChanges() {
+  const ctx = getSelectedMemoryContext();
+  if (!ctx) return;
+  const snapshot = state.memoryContextSnapshot || { role: ctx.role, description: ctx.description || "" };
+  ensureRoleOption(snapshot.role);
+  if (memoryContextRole) {
+    memoryContextRole.value = snapshot.role || "user";
+  }
+  if (memoryContextDesc) {
+    memoryContextDesc.value = snapshot.description || "";
+  }
+  if (memoryContextHint) {
+    memoryContextHint.textContent = "已恢复修改。";
   }
 }
 
@@ -917,6 +1723,23 @@ function scrollToSection(section) {
   target.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function setKbTab(tab) {
+  if (!tab) return;
+  kbTabButtons.forEach((button) => {
+    const isActive = button.dataset.tab === tab;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  const panels = kbTabPanels.length
+    ? kbTabPanels
+    : Array.from(document.querySelectorAll(".tab-panel[data-tab-panel]"));
+  panels.forEach((panel) => {
+    const isActive = panel.dataset.tabPanel === tab;
+    panel.classList.toggle("active", isActive);
+    panel.setAttribute("aria-hidden", isActive ? "false" : "true");
+  });
+}
+
 apiBaseInput.addEventListener("change", (event) => {
   setApiBase(event.target.value.trim());
   loadData();
@@ -931,26 +1754,94 @@ appSwitch.addEventListener("change", (event) => {
   window.location.href = `./app.html?app_id=${encodeURIComponent(nextApp)}`;
 });
 appNewDoc.addEventListener("click", () => {
-  scrollToSection("documents");
+  setKbTab("data");
+  scrollToSection("knowledge");
   openNewDocDrawer();
 });
 appIngestion.addEventListener("click", () => {
   scrollToSection("ingestion");
 });
+if (kbViewTabs) {
+  kbTabButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setKbTab(button.dataset.tab);
+    });
+  });
+  kbViewTabs.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest(".tab-button");
+    if (!button || !kbViewTabs.contains(button)) return;
+    setKbTab(button.dataset.tab);
+  });
+  const defaultTab = kbTabButtons.find((button) => button.classList.contains("active"))?.dataset.tab || "structure";
+  setKbTab(defaultTab);
+}
 kbFilterToggle.addEventListener("click", () => {
   kbFilterPanel.classList.toggle("hidden");
 });
 schemaToggle.addEventListener("click", () => toggleSchema());
 kbSearch.addEventListener("input", () => renderKbTable());
-docSearch.addEventListener("input", () => renderDocTable());
+docSearch.addEventListener("input", () => {
+  renderDocTable();
+  if (docExportHint) {
+    docExportHint.textContent = "";
+  }
+});
 docRefresh.addEventListener("click", () => loadDocuments());
 if (docToggle) {
   docToggle.addEventListener("click", () => toggleDocPanel());
 }
+if (docColumnsToggle) {
+  docColumnsToggle.addEventListener("click", () => toggleDocColumnsPanel());
+}
+if (docExport) {
+  docExport.addEventListener("click", () => exportDocuments());
+}
+if (docBulkExport) {
+  docBulkExport.addEventListener("click", () => exportSelectedDocuments());
+}
+if (docBulkDelete) {
+  docBulkDelete.addEventListener("click", () => deleteSelectedDocuments());
+}
+if (docPageSize) {
+  docPageSize.addEventListener("change", (event) => {
+    const next = Number.parseInt(event.target.value, 10);
+    if (Number.isNaN(next)) return;
+    updateDocPageSize(next);
+  });
+}
+if (docPrev) {
+  docPrev.addEventListener("click", () => {
+    updateDocPageOffset(state.docPageOffset - state.docPageSize);
+  });
+}
+if (docNext) {
+  docNext.addEventListener("click", () => {
+    updateDocPageOffset(state.docPageOffset + state.docPageSize);
+  });
+}
 docReset.addEventListener("click", () => openNewDocDrawer());
 docDelete.addEventListener("click", () => handleDocDelete());
 docForm.addEventListener("submit", handleDocSubmit);
-memoryForm.addEventListener("submit", handleMemorySubmit);
+if (memoryRefresh) {
+  memoryRefresh.addEventListener("click", () => loadMemorySessions());
+}
+if (memoryWalletFilter) {
+  memoryWalletFilter.addEventListener("input", () => loadMemorySessions());
+}
+if (memorySessionFilter) {
+  memorySessionFilter.addEventListener("input", () => loadMemorySessions());
+}
+if (memoryContextRefresh) {
+  memoryContextRefresh.addEventListener("click", () => loadMemoryContexts());
+}
+if (memoryContextForm) {
+  memoryContextForm.addEventListener("submit", handleMemoryContextSubmit);
+}
+if (memoryContextReset) {
+  memoryContextReset.addEventListener("click", () => resetMemoryContextChanges());
+}
 ingestionExport.addEventListener("click", () => exportIngestionLogs());
 if (docDrawerBackdrop) {
   docDrawerBackdrop.addEventListener("click", () => closeDocDrawer());
@@ -965,4 +1856,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 apiBaseInput.value = loadApiBase();
+if (docPageSize) {
+  docPageSize.value = String(state.docPageSize);
+}
 loadData();

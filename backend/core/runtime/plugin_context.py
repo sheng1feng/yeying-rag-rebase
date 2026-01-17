@@ -54,7 +54,7 @@ def _resolve_minio_key(bucket: str, identity: Identity, url: str) -> str:
     key = raw.lstrip("/")
     if key.startswith(f"{bucket}/"):
         key = key[len(bucket) + 1 :]
-    if key.startswith("memory/"):
+    if key.startswith("memory/") or key.startswith("kb/"):
         return key
     return PathBuilder.business_file(identity, key)
 
