@@ -54,6 +54,9 @@ wallet_id + app_id + session_id
 
 - `POST /app/register`  
   用于将 app 进入 `active` 状态，供 `/query` 与 `/memory/push` 使用。
+- 请求体需包含 `wallet_id`，注册后 app 归属该钱包（租户隔离）。
+- 可用 `GET /app/{app_id}/status?wallet_id=...` 查看 app 状态与 KB 统计。
+- 超级管理员钱包由 `SUPER_ADMIN_WALLET_ID` 指定，可跨租户查看应用与 KB。
 
 ### 4.2 记忆写入
 
@@ -65,7 +68,7 @@ wallet_id + app_id + session_id
 
 ### 4.3 KB 文档写入
 
-接口：`POST /kb/{app_id}/{kb_key}/documents`
+接口：`POST /kb/{app_id}/{kb_key}/documents?wallet_id=...`
 
 在 `user_upload` 类型下建议至少写入：
 
@@ -75,13 +78,19 @@ wallet_id + app_id + session_id
 - `resume_id`
 - `jd_id`
 - `metadata_json`
+- `file_type`（建议从文件后缀解析）
+
+补充：文档写入会同步记录到 SQLite `kb_documents` 表，用于后续统计与审计。详情见：
+
+- `docs/backend-kb-metadata.md`
+- `docs/backend-kb-ingestion.md`
 
 ### 4.4 查询编排
 
 入口：`POST /query`  
 流程由 `QueryOrchestrator` 负责，核心步骤：
 
-1) 校验 app 状态  
+1) 校验 app 状态 + owner  
 2) 解析身份  
 3) 读取短期/长期记忆  
 4) 根据插件 KB 配置做向量检索  
@@ -102,6 +111,33 @@ wallet_id + app_id + session_id
 说明：
 - 默认写入 app 下第一个 `user_upload` KB
 - 返回 `jd_id`，供 `/query` 使用
+
+### 4.7 摄取作业（Jobs）
+
+用途：
+- 将摄取流程拆分为可追踪作业
+- 支持先创建作业，再执行
+
+入口：
+- `POST /ingestion/jobs`
+- `POST /ingestion/jobs/{job_id}/run`
+
+说明文档：
+- `docs/backend-ingestion-jobs.md`
+- `docs/backend-ingestion-parsers.md`
+
+### 4.8 私有数据库（Private DB）
+
+用途：
+- 通过 `session_id` 自动绑定私有库
+- 支持将多个会话绑定到同一私有库（用户聚合）
+
+入口：
+- `POST /private_dbs`
+- `POST /private_dbs/{private_db_id}/bind`
+- `GET /private_dbs`（支持 `owner_wallet_id` 过滤，超级管理员可用）
+- `GET /private_dbs/{private_db_id}/sessions`（会话绑定列表）
+- `DELETE /private_dbs/{private_db_id}/sessions/{session_id}`（解绑会话）
 
 ---
 
@@ -141,7 +177,7 @@ wallet_id + app_id + session_id
 
 - 文档是否写入 `wallet_id`
 - `allowed_apps` 是否与当前 `app_id` 一致
-- `/kb/{app}/{kb}/documents?wallet_id=xxx` 是否能查到
+- `/kb/{app}/{kb}/documents?wallet_id=xxx&private_db_id=...` 或 `session_id=...` 是否能查到
 
 ---
 

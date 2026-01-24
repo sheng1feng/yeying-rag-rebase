@@ -16,6 +16,7 @@ from api.schemas.memory import (
     MemoryContextUpdateRequest,
     MemoryContextItem,
 )
+from api.routers.owner import ensure_app_owner, is_super_admin, require_wallet_id
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -96,22 +97,28 @@ def _attach_memory_content(rows: list[dict], deps, *, limit_chars: Optional[int]
 def list_memory_sessions(
     app_id: Optional[str] = None,
     wallet_id: Optional[str] = None,
+    data_wallet_id: Optional[str] = None,
     session_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     deps=Depends(get_deps),
 ):
     try:
+        wallet_id = require_wallet_id(wallet_id)
+        if app_id:
+            ensure_app_owner(deps, app_id, wallet_id)
+        elif not is_super_admin(deps, wallet_id):
+            raise HTTPException(status_code=400, detail="app_id is required")
         rows = deps.datasource.identity_session.list(
             app_id=app_id,
-            wallet_id=wallet_id,
+            wallet_id=data_wallet_id,
             session_id=session_id,
             limit=limit,
             offset=offset,
         )
         total = deps.datasource.identity_session.count(
             app_id=app_id,
-            wallet_id=wallet_id,
+            wallet_id=data_wallet_id,
             session_id=session_id,
         )
         return MemorySessionList(items=rows, total=total)
@@ -122,12 +129,21 @@ def list_memory_sessions(
 @router.get("/{memory_key}/contexts", response_model=MemoryContextList)
 def list_memory_contexts(
     memory_key: str,
+    wallet_id: Optional[str] = None,
+    data_wallet_id: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     include_content: int = 0,
     deps=Depends(get_deps),
 ):
     try:
+        operator_wallet = require_wallet_id(wallet_id)
+        meta = deps.datasource.memory_metadata.get(memory_key)
+        if not meta:
+            raise HTTPException(status_code=404, detail="memory session not found")
+        ensure_app_owner(deps, meta.get("app_id"), operator_wallet)
+        if data_wallet_id and meta.get("wallet_id") != data_wallet_id:
+            raise HTTPException(status_code=404, detail="memory session not found")
         rows = deps.datasource.memory_contexts.list_by_memory(
             memory_key=memory_key,
             limit=limit,
@@ -142,10 +158,23 @@ def list_memory_contexts(
 
 
 @router.patch("/contexts/{uid}", response_model=MemoryContextItem)
-def update_memory_context(uid: str, req: MemoryContextUpdateRequest, deps=Depends(get_deps)):
+def update_memory_context(
+    uid: str,
+    req: MemoryContextUpdateRequest,
+    wallet_id: Optional[str] = None,
+    data_wallet_id: Optional[str] = None,
+    deps=Depends(get_deps),
+):
     try:
+        operator_wallet = require_wallet_id(wallet_id)
         row = deps.datasource.memory_contexts.get(uid)
         if not row:
+            raise HTTPException(status_code=404, detail="memory context not found")
+        meta = deps.datasource.memory_metadata.get(row.get("memory_key"))
+        if not meta:
+            raise HTTPException(status_code=404, detail="memory session not found")
+        ensure_app_owner(deps, meta.get("app_id"), operator_wallet)
+        if data_wallet_id and meta.get("wallet_id") != data_wallet_id:
             raise HTTPException(status_code=404, detail="memory context not found")
         updated = deps.datasource.memory_contexts.update_fields(
             uid,

@@ -49,8 +49,13 @@ def http_json(
         return e.code, raw or e.reason
 
 
-def ensure_app_registered(api_base: str, app_id: str, timeout: int) -> None:
-    status, body = http_json("POST", f"{api_base}/app/register", {"app_id": app_id}, timeout=timeout)
+def ensure_app_registered(api_base: str, app_id: str, wallet_id: str, timeout: int) -> None:
+    status, body = http_json(
+        "POST",
+        f"{api_base}/app/register",
+        {"app_id": app_id, "wallet_id": wallet_id},
+        timeout=timeout,
+    )
     if status >= 400:
         raise RuntimeError(f"/app/register failed: {status} {body}")
 
@@ -73,8 +78,8 @@ def check_stores(api_base: str, timeout: int) -> None:
         print(f"- {name}: {status} {detail}")
 
 
-def list_apps(api_base: str, timeout: int) -> list[dict]:
-    status, body = http_json("GET", f"{api_base}/app/list", timeout=timeout)
+def list_apps(api_base: str, wallet_id: str, timeout: int) -> list[dict]:
+    status, body = http_json("GET", f"{api_base}/app/list?wallet_id={wallet_id}", timeout=timeout)
     if status >= 400:
         raise RuntimeError(f"/app/list failed: {status} {body}")
     return body or []
@@ -87,22 +92,27 @@ def list_intents(api_base: str, app_id: str, timeout: int) -> dict:
     return body or {}
 
 
-def list_kb(api_base: str, timeout: int) -> list[dict]:
-    status, body = http_json("GET", f"{api_base}/kb/list", timeout=timeout)
+def list_kb(api_base: str, wallet_id: str, timeout: int) -> list[dict]:
+    status, body = http_json("GET", f"{api_base}/kb/list?wallet_id={wallet_id}", timeout=timeout)
     if status >= 400:
         raise RuntimeError(f"/kb/list failed: {status} {body}")
     return body or []
 
 
-def kb_stats(api_base: str, app_id: str, kb_key: str, timeout: int) -> dict:
-    status, body = http_json("GET", f"{api_base}/kb/{app_id}/{kb_key}/stats", timeout=timeout)
+def kb_stats(api_base: str, app_id: str, kb_key: str, wallet_id: str, timeout: int) -> dict:
+    status, body = http_json(
+        "GET",
+        f"{api_base}/kb/{app_id}/{kb_key}/stats?wallet_id={wallet_id}",
+        timeout=timeout,
+    )
     if status >= 400:
         raise RuntimeError(f"/kb/{app_id}/{kb_key}/stats failed: {status} {body}")
     return body or {}
 
 
-def create_ingestion_log(api_base: str, app_id: str, kb_key: str, timeout: int) -> None:
+def create_ingestion_log(api_base: str, app_id: str, kb_key: str, wallet_id: str, timeout: int) -> None:
     payload = {
+        "wallet_id": wallet_id,
         "status": "success",
         "message": "smoke validation ingestion log",
         "app_id": app_id,
@@ -115,8 +125,12 @@ def create_ingestion_log(api_base: str, app_id: str, kb_key: str, timeout: int) 
         raise RuntimeError(f"/ingestion/logs failed: {status} {body}")
 
 
-def list_ingestion_logs(api_base: str, app_id: str, timeout: int) -> dict:
-    status, body = http_json("GET", f"{api_base}/ingestion/logs?limit=5&app_id={app_id}", timeout=timeout)
+def list_ingestion_logs(api_base: str, app_id: str, wallet_id: str, timeout: int) -> dict:
+    status, body = http_json(
+        "GET",
+        f"{api_base}/ingestion/logs?wallet_id={wallet_id}&limit=5&app_id={app_id}",
+        timeout=timeout,
+    )
     if status >= 400:
         raise RuntimeError(f"/ingestion/logs list failed: {status} {body}")
     return body or {}
@@ -194,6 +208,7 @@ def upload_resume_api(
     resume_payload: Dict[str, Any],
     timeout: int,
     *,
+    session_id: str = "",
     resume_id: str = "",
     kb_key: str = "",
 ) -> Dict[str, Any]:
@@ -202,6 +217,8 @@ def upload_resume_api(
         "app_id": app_id,
         "resume": resume_payload,
     }
+    if session_id:
+        payload["session_id"] = session_id
     if resume_id:
         payload["resume_id"] = resume_id
     if kb_key:
@@ -220,6 +237,7 @@ def upload_jd_api(
     jd_payload: Dict[str, Any],
     timeout: int,
     *,
+    session_id: str = "",
     jd_id: str = "",
     kb_key: str = "",
 ) -> Dict[str, Any]:
@@ -228,6 +246,8 @@ def upload_jd_api(
         "app_id": app_id,
         "jd": jd_payload,
     }
+    if session_id:
+        payload["session_id"] = session_id
     if jd_id:
         payload["jd_id"] = jd_id
     if kb_key:
@@ -260,11 +280,12 @@ def create_doc(
     kb_key: str,
     text: str,
     properties: Dict[str, Any],
+    wallet_id: str,
     timeout: int,
 ) -> Dict[str, Any]:
     status, body = http_json(
         "POST",
-        f"{api_base}/kb/{app_id}/{kb_key}/documents",
+        f"{api_base}/kb/{app_id}/{kb_key}/documents?wallet_id={wallet_id}",
         {"text": text, "properties": properties},
         timeout=timeout,
     )
@@ -280,11 +301,12 @@ def replace_doc(
     doc_id: str,
     text: str,
     properties: Dict[str, Any],
+    wallet_id: str,
     timeout: int,
 ) -> Dict[str, Any]:
     status, body = http_json(
         "PUT",
-        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}",
+        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}?wallet_id={wallet_id}",
         {"text": text, "properties": properties},
         timeout=timeout,
     )
@@ -299,11 +321,12 @@ def patch_doc(
     kb_key: str,
     doc_id: str,
     properties: Dict[str, Any],
+    wallet_id: str,
     timeout: int,
 ) -> Dict[str, Any]:
     status, body = http_json(
         "PATCH",
-        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}",
+        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}?wallet_id={wallet_id}",
         {"properties": properties},
         timeout=timeout,
     )
@@ -312,10 +335,10 @@ def patch_doc(
     return body or {}
 
 
-def delete_doc(api_base: str, app_id: str, kb_key: str, doc_id: str, timeout: int) -> None:
+def delete_doc(api_base: str, app_id: str, kb_key: str, doc_id: str, wallet_id: str, timeout: int) -> None:
     status, body = http_json(
         "DELETE",
-        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}",
+        f"{api_base}/kb/{app_id}/{kb_key}/documents/{doc_id}?wallet_id={wallet_id}",
         timeout=timeout,
     )
     if status >= 400:
@@ -520,29 +543,37 @@ def main() -> int:
     check_stores(api_base, timeout)
 
     print("\n[3/14] Register app")
-    ensure_app_registered(api_base, app_id, timeout)
+    ensure_app_registered(api_base, app_id, wallet_id, timeout)
     print("OK")
 
     print("\n[4/14] App list + intents")
-    apps = list_apps(api_base, timeout)
+    apps = list_apps(api_base, wallet_id, timeout)
     intents = list_intents(api_base, app_id, timeout)
     print(json.dumps({"apps": apps, "intents": intents}, ensure_ascii=False, indent=2))
 
     print("\n[5/14] Ingestion logs")
-    create_ingestion_log(api_base, app_id, kb_key, timeout)
-    logs = list_ingestion_logs(api_base, app_id, timeout)
+    create_ingestion_log(api_base, app_id, kb_key, wallet_id, timeout)
+    logs = list_ingestion_logs(api_base, app_id, wallet_id, timeout)
     print(json.dumps(logs, ensure_ascii=False, indent=2))
 
     print("\n[6/14] KB list + stats")
-    kb_list = list_kb(api_base, timeout)
+    kb_list = list_kb(api_base, wallet_id, timeout)
     kb_info = next((kb for kb in kb_list if kb.get("app_id") == app_id and kb.get("kb_key") == kb_key), None)
     if not kb_info:
         raise RuntimeError(f"KB not found for app_id={app_id} kb_key={kb_key}")
-    stats = kb_stats(api_base, app_id, kb_key, timeout)
+    stats = kb_stats(api_base, app_id, kb_key, wallet_id, timeout)
     print(json.dumps({"kb": kb_info, "stats": stats}, ensure_ascii=False, indent=2))
 
     print("\n[7/14] Upload resume via /resume/upload")
-    upload_resp = upload_resume_api(api_base, wallet_id, app_id, resume_payload, timeout, kb_key=kb_key)
+    upload_resp = upload_resume_api(
+        api_base,
+        wallet_id,
+        app_id,
+        resume_payload,
+        timeout,
+        session_id=session_id,
+        kb_key=kb_key,
+    )
     resume_id = upload_resp.get("resume_id") or ""
     resume_url = upload_resp.get("source_url") or ""
     print(json.dumps(upload_resp, ensure_ascii=False, indent=2))
@@ -552,7 +583,15 @@ def main() -> int:
         raise RuntimeError("/resume/upload did not return source_url")
 
     print(f"\n[8/14] Upload JD via /{app_id}/jd/upload")
-    jd_resp = upload_jd_api(api_base, wallet_id, app_id, jd_payload, timeout, kb_key=kb_key)
+    jd_resp = upload_jd_api(
+        api_base,
+        wallet_id,
+        app_id,
+        jd_payload,
+        timeout,
+        session_id=session_id,
+        kb_key=kb_key,
+    )
     jd_id = jd_resp.get("jd_id") or ""
     jd_url = jd_resp.get("source_url") or ""
     print(json.dumps(jd_resp, ensure_ascii=False, indent=2))
@@ -581,14 +620,24 @@ def main() -> int:
     if use_allowed_apps:
         props["allowed_apps"] = app_id
 
-    created = create_doc(api_base, app_id, kb_key, resume_text, props, timeout)
-    replaced = replace_doc(api_base, app_id, kb_key, created.get("id", doc_id), resume_text, props, timeout)
+    created = create_doc(api_base, app_id, kb_key, resume_text, props, wallet_id, timeout)
+    replaced = replace_doc(
+        api_base,
+        app_id,
+        kb_key,
+        created.get("id", doc_id),
+        resume_text,
+        props,
+        wallet_id,
+        timeout,
+    )
     patched = patch_doc(
         api_base,
         app_id,
         kb_key,
         created.get("id", doc_id),
         {"notes": "smoke validation"},
+        wallet_id,
         timeout,
     )
     docs = list_docs(api_base, app_id, kb_key, timeout, wallet_id=wallet_id)
@@ -639,7 +688,7 @@ def main() -> int:
             print(json.dumps(answer, ensure_ascii=False, indent=2))
 
     print("\n[cleanup] Delete KB document")
-    delete_doc(api_base, app_id, kb_key, created.get("id", doc_id), timeout)
+    delete_doc(api_base, app_id, kb_key, created.get("id", doc_id), wallet_id, timeout)
     print("OK")
 
     return 0

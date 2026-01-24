@@ -65,3 +65,22 @@ class PathBuilder:
         """
         safe_id = str(jd_id).strip().lstrip("/")
         return f"kb/{wallet_id}/{app_id}/jd/{safe_id}.json"
+
+    @staticmethod
+    def kb_prefix(wallet_id: str, app_id: str, kb_key: str) -> str:
+        """
+        KB 基础路径：
+            kb/<wallet>/<app>/<kb_key>/
+        """
+        safe_key = str(kb_key).strip().lstrip("/")
+        return f"kb/{wallet_id}/{app_id}/{safe_key}/"
+
+    @staticmethod
+    def kb_upload(wallet_id: str, app_id: str, kb_key: str, filename: str) -> str:
+        """
+        通用 KB 上传文件路径：
+            kb/<wallet>/<app>/<kb_key>/uploads/<filename>
+        """
+        safe_name = str(filename).strip().lstrip("/")
+        prefix = PathBuilder.kb_prefix(wallet_id, app_id, kb_key)
+        return f"{prefix}uploads/{safe_name}"

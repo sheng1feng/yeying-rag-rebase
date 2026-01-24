@@ -44,8 +44,13 @@ def http_json(
         return e.code, raw or e.reason
 
 
-def ensure_app_registered(api_base: str, app_id: str, timeout: int) -> None:
-    status, body = http_json("POST", f"{api_base}/app/register", {"app_id": app_id}, timeout=timeout)
+def ensure_app_registered(api_base: str, app_id: str, wallet_id: str, timeout: int) -> None:
+    status, body = http_json(
+        "POST",
+        f"{api_base}/app/register",
+        {"app_id": app_id, "wallet_id": wallet_id},
+        timeout=timeout,
+    )
     if status >= 400:
         raise RuntimeError(f"/app/register failed: {status} {body}")
 
@@ -201,7 +206,7 @@ def main() -> int:
                 print(f"- {name}: {status} {detail}")
 
     print("\n[1/4] Register app")
-    ensure_app_registered(api_base, app_id, timeout)
+    ensure_app_registered(api_base, app_id, wallet_id, timeout)
     print("OK")
 
     print("\n[2/4] Upload session history to MinIO")

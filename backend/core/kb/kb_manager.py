@@ -104,8 +104,11 @@ class KnowledgeBaseManager:
             filters: Dict[str, Any] = {}
 
             if kb_type == "user_upload":
-                # 必须按 wallet_id 过滤，避免不同用户互相看到
-                filters["wallet_id"] = identity.wallet_id
+                # 必须按 private_db_id 过滤，避免不同私有库互相看到
+                if identity.private_db_id:
+                    filters["private_db_id"] = identity.private_db_id
+                else:
+                    filters["wallet_id"] = identity.wallet_id
 
                 # 如果在写入 user_upload KB 的时候给每条 chunk/文档存了 allowed_apps
                 # 那就按 app_id 再过滤一层（可选但强烈建议）

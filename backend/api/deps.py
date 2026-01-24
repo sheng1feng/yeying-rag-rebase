@@ -114,6 +114,8 @@ def get_identity_manager() -> IdentityManager:
     return IdentityManager(
         session_store=get_session_store(),
         app_store=ds.app_store,
+        private_db_store=ds.private_dbs,
+        super_admin_wallet_id=get_settings().super_admin_wallet_id,
     )
 
 

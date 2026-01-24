@@ -19,6 +19,9 @@ from datasource.sqlstores.memory_contexts_store import MemoryContextsStore
 from datasource.sqlstores.memory_metadata_store import MemoryMetadataStore
 from datasource.sqlstores.app_registry_store import AppRegistryStore
 from datasource.sqlstores.ingestion_log_store import IngestionLogStore
+from datasource.sqlstores.kb_document_store import KBDocumentStore
+from datasource.sqlstores.ingestion_job_store import IngestionJobStore
+from datasource.sqlstores.private_db_store import PrivateDBStore
 
 class Datasource:
     """
@@ -40,6 +43,9 @@ class Datasource:
         self.memory_metadata = MemoryMetadataStore(self.sqlite_conn)
         self.app_store = AppRegistryStore(self.sqlite_conn)
         self.ingestion_logs = IngestionLogStore(self.sqlite_conn)
+        self.kb_documents = KBDocumentStore(self.sqlite_conn)
+        self.ingestion_jobs = IngestionJobStore(self.sqlite_conn)
+        self.private_dbs = PrivateDBStore(self.sqlite_conn)
 
         # ---------- MinIO ----------
         self.minio_conn = None

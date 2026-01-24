@@ -10,8 +10,10 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_deps
+from api.kb_meta import infer_file_type, sha256_text
 from api.routers.kb import _ensure_collection, _resolve_kb_config, _text_field_from_cfg
 from api.schemas.jd import JDUploadRequest, JDUploadResponse
+from api.routers.private_db_utils import resolve_private_db_id
 from datasource.objectstores.path_builder import PathBuilder
 
 
@@ -85,16 +87,30 @@ def upload_jd(app_id: str, req: JDUploadRequest, deps=Depends(get_deps)):
         raw_json = _serialize_payload(req.jd)
         jd_text = _extract_text(req.jd) or raw_json
 
+        private_db_id = resolve_private_db_id(
+            deps,
+            app_id=effective_app_id,
+            wallet_id=req.wallet_id,
+            private_db_id=req.private_db_id,
+            session_id=req.session_id,
+            allow_create=True,
+        )
+        if not private_db_id:
+            raise HTTPException(status_code=400, detail="session_id or private_db_id is required")
+
         key = PathBuilder.user_jd(req.wallet_id, effective_app_id, jd_id)
         deps.datasource.minio.put_text(bucket=deps.datasource.bucket, key=key, text=raw_json)
         source_url = f"minio://{deps.datasource.bucket}/{key}"
+        file_type = infer_file_type(source_url) or "json"
 
         text_field = _text_field_from_cfg(cfg)
         props: Dict[str, Any] = {
             text_field: jd_text,
             "wallet_id": req.wallet_id,
+            "private_db_id": private_db_id,
             "jd_id": jd_id,
             "source_url": source_url,
+            "file_type": file_type,
             "metadata_json": raw_json,
         }
         if req.metadata:
@@ -108,6 +124,19 @@ def upload_jd(app_id: str, req: JDUploadRequest, deps=Depends(get_deps)):
             collection=collection,
             vector=vector,
             properties=props,
+        )
+
+        deps.datasource.kb_documents.upsert(
+            doc_id=str(doc_id),
+            app_id=effective_app_id,
+            kb_key=kb_key,
+            wallet_id=req.wallet_id,
+            private_db_id=private_db_id,
+            source_url=source_url,
+            source_type="jd",
+            source_id=jd_id,
+            file_type=file_type,
+            content_sha256=sha256_text(raw_json),
         )
 
         return JDUploadResponse(

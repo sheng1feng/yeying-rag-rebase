@@ -1,4 +1,12 @@
-import { state, loadApiBase, setApiBase } from "./state.js";
+import {
+  state,
+  loadApiBase,
+  setApiBase,
+  loadWalletId,
+  roleLabel,
+  isSuperAdmin,
+  ensureLoggedIn,
+} from "./state.js";
 import { mockData } from "./mock.js";
 import { ping, fetchStoresHealth, fetchApps } from "./api.js";
 
@@ -6,7 +14,10 @@ const apiBaseInput = document.getElementById("api-base");
 const refreshBtn = document.getElementById("refresh-btn");
 const statusDot = document.getElementById("api-status-dot");
 const statusText = document.getElementById("api-status-text");
+const rolePill = document.getElementById("role-pill");
+const walletIdDisplay = document.getElementById("wallet-id-display");
 const backBtn = document.getElementById("back-btn");
+const loginBtn = document.getElementById("login-btn");
 const storesRefresh = document.getElementById("stores-refresh");
 const storesExport = document.getElementById("stores-export");
 
@@ -27,6 +38,18 @@ function setStatus(online) {
     ? "0 0 12px rgba(57, 217, 138, 0.7)"
     : "0 0 12px rgba(255, 106, 136, 0.7)";
   statusText.textContent = online ? "在线" : "离线";
+}
+
+function renderIdentity() {
+  if (walletIdDisplay) {
+    walletIdDisplay.textContent = state.walletId || "-";
+  }
+  if (rolePill) {
+    const superAdmin = isSuperAdmin();
+    rolePill.textContent = roleLabel();
+    rolePill.classList.toggle("super", superAdmin);
+    rolePill.classList.toggle("tenant", !superAdmin);
+  }
 }
 
 function applyData(data) {
@@ -64,6 +87,7 @@ async function loadData() {
     }
   }
   setStatus(online);
+  renderIdentity();
 
   if (!online) {
     applyData({ stores: mockData.stores, apps: mockData.apps });
@@ -71,7 +95,7 @@ async function loadData() {
   }
 
   try {
-    const [storesHealth, apps] = await Promise.all([fetchStoresHealth(), fetchApps()]);
+    const [storesHealth, apps] = await Promise.all([fetchStoresHealth(), fetchApps(state.walletId)]);
     applyData({
       stores: mapStores(storesHealth) || [],
       apps: apps || [],
@@ -166,6 +190,12 @@ function renderBrowserEntries() {
       description: "跨应用的摄取事件与统计。",
       action: "打开总览",
       href: "./index.html",
+    },
+    {
+      title: "验证中心",
+      description: "可视化运行中台接口验证脚本。",
+      action: "打开验证",
+      href: "./validation.html",
     },
   ];
 
@@ -280,6 +310,12 @@ storesExport.addEventListener("click", () => exportStores());
 backBtn.addEventListener("click", () => {
   window.location.href = "./index.html";
 });
+if (loginBtn) {
+  loginBtn.addEventListener("click", () => {
+    const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
+    window.location.href = `./login.html?next=${next}`;
+  });
+}
 if (storeAppSelect) {
   storeAppSelect.addEventListener("change", (event) => {
     state.selectedAppId = event.target.value;
@@ -288,4 +324,9 @@ if (storeAppSelect) {
 }
 
 apiBaseInput.value = loadApiBase();
-loadData();
+loadWalletId();
+const loggedIn = ensureLoggedIn();
+if (loggedIn) {
+  renderIdentity();
+  loadData();
+}

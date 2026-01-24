@@ -30,6 +30,11 @@
           <span class="status-dot" id="api-status-dot"></span>
           <span id="api-status-text">离线</span>
         </div>
+        <div class="identity-status">
+          <span class="role-pill super" id="role-pill">超级管理员</span>
+          <span class="wallet-id" id="wallet-id-display">-</span>
+        </div>
+        <button class="ghost" id="login-btn">切换账号</button>
         <button class="ghost" id="back-btn">返回</button>
       </div>
     </header>
@@ -51,6 +56,11 @@
               <span class="metric-value" id="metric-api-base">/</span>
               <span class="metric-trend" id="metric-api-base-trend">同源</span>
             </div>
+            <div class="metric-card">
+              <span class="metric-label">当前身份</span>
+              <span class="metric-value" id="metric-wallet-id">super_admin</span>
+              <span class="metric-trend" id="metric-role-label">超级管理员</span>
+            </div>
           </div>
         </section>
 
@@ -63,6 +73,10 @@
               </div>
             </div>
             <form id="settings-form" class="doc-form">
+              <div class="form-group">
+                <label for="wallet-id">操作钱包 ID</label>
+                <input id="wallet-id" type="text" placeholder="默认 super_admin" />
+              </div>
               <div class="form-group">
                 <label for="api-base">API 地址</label>
                 <input id="api-base" type="text" placeholder="留空使用同源地址" />

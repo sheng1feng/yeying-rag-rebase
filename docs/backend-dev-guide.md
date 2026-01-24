@@ -26,6 +26,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 - `OPENAI_*` / `EMBED_*`：LLM 与向量化模型
 - `SQLITE_PATH`：SQLite 文件路径
 - `PLUGINS_AUTO_REGISTER`：自动注册插件列表
+- `SUPER_ADMIN_WALLET_ID`：超级管理员钱包 ID（用于跨租户管理）
 
 ---
 
@@ -190,10 +191,11 @@ DDL 定义位置：`backend/datasource/connections/sqlite_connection.py`
 ### 6.5 app_registry
 
 - `app_id` (PK)
+- `owner_wallet_id`：租户/开发者钱包 ID（app 归属）
 - `status`：`active/disabled/deleted`
 - `created_at` / `updated_at`
 
-用途：应用注册状态。
+用途：应用注册状态 + 多租户归属。
 
 ### 6.6 ingestion_logs
 

@@ -10,8 +10,10 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_deps
+from api.kb_meta import infer_file_type, sha256_text
 from api.routers.kb import _ensure_collection, _resolve_kb_config, _text_field_from_cfg
 from api.schemas.resume import ResumeUploadRequest, ResumeUploadResponse
+from api.routers.private_db_utils import resolve_private_db_id
 from datasource.objectstores.path_builder import PathBuilder
 
 
@@ -81,16 +83,30 @@ def upload_resume(req: ResumeUploadRequest, deps=Depends(get_deps)):
         raw_json = _serialize_payload(req.resume)
         resume_text = _extract_text(req.resume) or raw_json
 
+        private_db_id = resolve_private_db_id(
+            deps,
+            app_id=req.app_id,
+            wallet_id=req.wallet_id,
+            private_db_id=req.private_db_id,
+            session_id=req.session_id,
+            allow_create=True,
+        )
+        if not private_db_id:
+            raise HTTPException(status_code=400, detail="session_id or private_db_id is required")
+
         key = PathBuilder.user_resume(req.wallet_id, req.app_id, resume_id)
         deps.datasource.minio.put_text(bucket=deps.datasource.bucket, key=key, text=raw_json)
         source_url = f"minio://{deps.datasource.bucket}/{key}"
+        file_type = infer_file_type(source_url) or "json"
 
         text_field = _text_field_from_cfg(cfg)
         props: Dict[str, Any] = {
             text_field: resume_text,
             "wallet_id": req.wallet_id,
+            "private_db_id": private_db_id,
             "resume_id": resume_id,
             "source_url": source_url,
+            "file_type": file_type,
             "metadata_json": raw_json,
         }
         if req.metadata:
@@ -104,6 +120,19 @@ def upload_resume(req: ResumeUploadRequest, deps=Depends(get_deps)):
             collection=collection,
             vector=vector,
             properties=props,
+        )
+
+        deps.datasource.kb_documents.upsert(
+            doc_id=str(doc_id),
+            app_id=req.app_id,
+            kb_key=kb_key,
+            wallet_id=req.wallet_id,
+            private_db_id=private_db_id,
+            source_url=source_url,
+            source_type="resume",
+            source_id=resume_id,
+            file_type=file_type,
+            content_sha256=sha256_text(raw_json),
         )
 
         return ResumeUploadResponse(

@@ -23,6 +23,9 @@ Optional flags:
 - `--skip-query` (skip LLM query step)
 - `--skip-default` (skip missing resume_id fallback query)
 
+Note:
+- New endpoints require `wallet_id` for app/KB/ingestion APIs. Use `--wallet-id` to override.
+
 ## Interviewer Session Memory Flow
 
 ```bash
@@ -42,6 +45,17 @@ python backend/scripts/smoke_resume_flow.py --timeout 120
 ```bash
 python backend/scripts/smoke_jd_flow.py --timeout 120
 ```
+
+## Tenant Console Validation
+
+Validate tenant isolation + app status APIs (no LLM required):
+
+```bash
+python backend/scripts/validate_console_access.py --wallet-id wallet_demo --app-id interviewer
+```
+
+Optional:
+- `--super-admin-id` to check super admin list (defaults to `SUPER_ADMIN_WALLET_ID` env).
 
 ## Notes
 

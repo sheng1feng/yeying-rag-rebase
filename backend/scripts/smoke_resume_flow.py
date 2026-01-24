@@ -37,8 +37,13 @@ def http_json(
         return e.code, raw or e.reason
 
 
-def ensure_app_registered(api_base: str, app_id: str, timeout: int) -> None:
-    status, body = http_json("POST", f"{api_base}/app/register", {"app_id": app_id}, timeout=timeout)
+def ensure_app_registered(api_base: str, app_id: str, wallet_id: str, timeout: int) -> None:
+    status, body = http_json(
+        "POST",
+        f"{api_base}/app/register",
+        {"app_id": app_id, "wallet_id": wallet_id},
+        timeout=timeout,
+    )
     if status >= 400:
         raise RuntimeError(f"/app/register failed: {status} {body}")
 
@@ -57,6 +62,7 @@ def upload_resume(
     resume_payload: Dict[str, Any],
     timeout: int,
     *,
+    session_id: str = "",
     resume_id: str = "",
     kb_key: str = "",
     metadata: Dict[str, Any] | None = None,
@@ -66,6 +72,8 @@ def upload_resume(
         "app_id": app_id,
         "resume": resume_payload,
     }
+    if session_id:
+        payload["session_id"] = session_id
     if resume_id:
         payload["resume_id"] = resume_id
     if kb_key:
@@ -175,7 +183,7 @@ def main() -> int:
             print(f"- {name}: {status} {detail}")
 
     print("\n[1/4] Register app")
-    ensure_app_registered(api_base, app_id, timeout)
+    ensure_app_registered(api_base, app_id, wallet_id, timeout)
     print("OK")
 
     print("\n[2/4] Upload resume via /resume/upload")
@@ -185,6 +193,7 @@ def main() -> int:
         app_id,
         resume_payload,
         timeout,
+        session_id=session_id,
         resume_id=args.resume_id,
         kb_key=args.kb_key,
         metadata={"source": "smoke"},

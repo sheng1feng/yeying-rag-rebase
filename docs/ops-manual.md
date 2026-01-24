@@ -60,8 +60,8 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 
 建议使用：
 
-- `/kb/{app}/{kb}/documents?wallet_id=xxx`
-- `/kb/{app}/{kb}/stats?wallet_id=xxx`
+- `/kb/{app}/{kb}/documents?wallet_id=xxx&data_wallet_id=user_123`
+- `/kb/{app}/{kb}/stats?wallet_id=xxx&data_wallet_id=user_123`
 
 ---
 

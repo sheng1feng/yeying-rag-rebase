@@ -1,4 +1,12 @@
-import { state, loadApiBase, setApiBase } from "./state.js";
+import {
+  state,
+  loadApiBase,
+  setApiBase,
+  loadWalletId,
+  roleLabel,
+  isSuperAdmin,
+  ensureLoggedIn,
+} from "./state.js";
 import { mockData } from "./mock.js";
 import {
   ping,
@@ -12,10 +20,16 @@ const apiBaseInput = document.getElementById("api-base");
 const refreshBtn = document.getElementById("refresh-btn");
 const statusDot = document.getElementById("api-status-dot");
 const statusText = document.getElementById("api-status-text");
+const rolePill = document.getElementById("role-pill");
+const walletIdDisplay = document.getElementById("wallet-id-display");
 const appsRefresh = document.getElementById("apps-refresh");
 const heroIngestion = document.getElementById("hero-ingestion");
 const heroStores = document.getElementById("hero-stores");
+const heroValidation = document.getElementById("hero-validation");
+const heroApiTest = document.getElementById("hero-api-test");
+const heroJobs = document.getElementById("hero-jobs");
 const heroSettings = document.getElementById("hero-settings");
+const loginBtn = document.getElementById("login-btn");
 
 const metricApps = document.getElementById("metric-apps");
 const metricKbs = document.getElementById("metric-kbs");
@@ -42,6 +56,18 @@ function setStatus(online) {
   statusText.textContent = online ? "在线" : "离线";
   if (heroApiStatus) {
     heroApiStatus.textContent = online ? "在线" : "离线";
+  }
+}
+
+function renderIdentity() {
+  if (walletIdDisplay) {
+    walletIdDisplay.textContent = state.walletId || "-";
+  }
+  if (rolePill) {
+    const superAdmin = isSuperAdmin();
+    rolePill.textContent = roleLabel();
+    rolePill.classList.toggle("super", superAdmin);
+    rolePill.classList.toggle("tenant", !superAdmin);
   }
 }
 
@@ -93,6 +119,7 @@ async function loadData() {
     }
   }
   setStatus(online);
+  renderIdentity();
 
   if (!online) {
     applyData(mockData);
@@ -100,17 +127,29 @@ async function loadData() {
   }
 
   try {
-    const [apps, kbList, ingestionLogs] = await Promise.all([
-      fetchApps(),
-      fetchKBList(),
-      fetchIngestionLogs(),
+    const walletId = state.walletId;
+    const [apps, kbList] = await Promise.all([
+      fetchApps(walletId),
+      fetchKBList(walletId),
     ]);
-    const ingestionRaw = (ingestionLogs && ingestionLogs.items) || [];
+
+    const ingestionRaw = [];
+    if (apps && apps.length) {
+      const ingestionResults = await Promise.all(
+        apps.map((app) =>
+          fetchIngestionLogs({ appId: app.app_id, walletId, limit: 5, offset: 0 }).catch(() => ({ items: [] }))
+        )
+      );
+      ingestionResults.forEach((res) => {
+        (res.items || []).forEach((item) => ingestionRaw.push(item));
+      });
+      ingestionRaw.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    }
 
     const kbStats = await Promise.all(
       (kbList || []).map(async (kb) => {
         try {
-          const stat = await fetchKBStats(kb.app_id, kb.kb_key);
+          const stat = await fetchKBStats(kb.app_id, kb.kb_key, walletId);
           return {
             key: `${kb.app_id}:${kb.kb_key}`,
             count: stat.total_count,
@@ -151,7 +190,7 @@ async function loadData() {
       apps: apps || mockData.apps,
       knowledgeBases: mappedKbs.length ? mappedKbs : mockData.knowledgeBases,
       vectors: totalVectors,
-      ingestion: mapIngestion(ingestionLogs) || mockData.ingestion,
+      ingestion: mapIngestion({ items: ingestionRaw }) || mockData.ingestion,
       ingestionRaw,
     });
   } catch (err) {
@@ -290,11 +329,37 @@ heroIngestion.addEventListener("click", () => scrollToSection("activity"));
 heroStores.addEventListener("click", () => {
   window.location.href = "./stores.html";
 });
+if (heroValidation) {
+  heroValidation.addEventListener("click", () => {
+    window.location.href = "./validation.html";
+  });
+}
+if (heroApiTest) {
+  heroApiTest.addEventListener("click", () => {
+    window.location.href = "./api_test.html";
+  });
+}
+if (heroJobs) {
+  heroJobs.addEventListener("click", () => {
+    window.location.href = "./ingestion_jobs.html";
+  });
+}
 heroSettings.addEventListener("click", () => {
   window.location.href = "./settings.html";
 });
+if (loginBtn) {
+  loginBtn.addEventListener("click", () => {
+    const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`);
+    window.location.href = `./login.html?next=${next}`;
+  });
+}
 appSearch.addEventListener("input", () => renderAppGrid());
 ingestionExport.addEventListener("click", () => exportIngestionLogs());
 
 apiBaseInput.value = loadApiBase();
-loadData();
+loadWalletId();
+const loggedIn = ensureLoggedIn();
+if (loggedIn) {
+  renderIdentity();
+  loadData();
+}

@@ -67,3 +67,6 @@ class Settings(BaseModel):
     embed_dim: int = _env_int("EMBEDDING_DIM", 0)
     # ---------- Plugins ----------
     plugins_auto_register: str = os.getenv("PLUGINS_AUTO_REGISTER", "interviewer")
+
+    # ---------- Access Control ----------
+    super_admin_wallet_id: str = os.getenv("SUPER_ADMIN_WALLET_ID", "super_admin")

@@ -25,6 +25,7 @@ class IngestionLogStore:
         *,
         status: str,
         message: str = "",
+        wallet_id: Optional[str] = None,
         app_id: Optional[str] = None,
         kb_key: Optional[str] = None,
         collection: Optional[str] = None,
@@ -33,10 +34,10 @@ class IngestionLogStore:
         meta_json = json.dumps(meta, ensure_ascii=False) if meta else None
         self.conn.execute(
             """
-            INSERT INTO ingestion_logs(app_id, kb_key, collection, status, message, meta_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO ingestion_logs(wallet_id, app_id, kb_key, collection, status, message, meta_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (app_id, kb_key, collection, status, message, meta_json),
+            (wallet_id, app_id, kb_key, collection, status, message, meta_json),
         )
 
     def list(
@@ -44,6 +45,7 @@ class IngestionLogStore:
         *,
         limit: int = 50,
         offset: int = 0,
+        wallet_id: Optional[str] = None,
         app_id: Optional[str] = None,
         kb_key: Optional[str] = None,
         status: Optional[str] = None,
@@ -51,6 +53,9 @@ class IngestionLogStore:
         clauses = []
         params: List[Any] = []
 
+        if wallet_id:
+            clauses.append("wallet_id = ?")
+            params.append(wallet_id)
         if app_id:
             clauses.append("app_id = ?")
             params.append(app_id)

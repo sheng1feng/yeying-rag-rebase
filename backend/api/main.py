@@ -13,8 +13,10 @@ from api.routers.memory import router as memory_router
 from api.routers.kb import router as kb_router
 from api.routers.stores import router as stores_router
 from api.routers.ingestion import router as ingestion_router
+from api.routers.ingestion_jobs import router as ingestion_jobs_router
 from api.routers.resume import router as resume_router
 from api.routers.jd import router as jd_router
+from api.routers.private_dbs import router as private_db_router
 
 
 def create_app() -> FastAPI:
@@ -40,7 +42,9 @@ def create_app() -> FastAPI:
     common_router.include_router(kb_router)
     common_router.include_router(stores_router)
     common_router.include_router(ingestion_router)
+    common_router.include_router(ingestion_jobs_router)
     common_router.include_router(memory_router)
+    common_router.include_router(private_db_router)
 
     # Business APIs (workflow-specific)
     biz_router = APIRouter()
