@@ -195,26 +195,6 @@ class InterviewerPipeline:
 
         resume_text = _as_str(p.get("resume_text"))
         jd_text = _as_str(p.get("jd_text"))
-        resume_url = _as_str(p.get("resume_url") or p.get("resume"))
-        jd_url = _as_str(p.get("jd_url") or p.get("jd"))
-
-        if (resume_url or jd_url) and self.context is None:
-            raise RuntimeError("Plugin context not injected into pipeline")
-
-        if resume_url and not resume_text:
-            resume_text = self.context.load_text_from_minio(
-                identity,
-                resume_url,
-                field_name="resume_url",
-                max_chars=_RESUME_PROMPT_MAX_CHARS,
-            )
-        if jd_url and not jd_text:
-            jd_text = self.context.load_text_from_minio(
-                identity,
-                jd_url,
-                field_name="jd_url",
-                max_chars=_JD_PROMPT_MAX_CHARS,
-            )
 
         if resume_text:
             resume_text = _clip_text(resume_text, _RESUME_PROMPT_MAX_CHARS)
@@ -230,8 +210,6 @@ class InterviewerPipeline:
                 user_query = _default_query(target_position, company)
 
         base_params = dict(p)
-        base_params.pop("resume_url", None)
-        base_params.pop("jd_url", None)
         if resume_text:
             base_params["resume_text"] = resume_text
         if jd_text:
